@@ -1,0 +1,8 @@
+export { default as ScriptEditor } from "./ScriptEditor";
+export { default as StoryboardView } from "./StoryboardView";
+export { default as RolesView } from "./RolesView";
+export { default as OptimizeView } from "./OptimizeView";
+export { default as CostumesView } from "./CostumesView";
+export { default as ScenesView } from "./ScenesView";
+export { default as PropsView } from "./PropsView";
+export { default as RedlineView } from "./RedlineView";

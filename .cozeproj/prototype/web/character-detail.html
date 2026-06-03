@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航 -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary" aria-current="page">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+      <!-- 顶部操作栏 -->
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <a href="characters.html" id="btn-back" class="w-8 h-8 rounded-md flex items-center justify-center bg-surface-container hover:bg-surface-container-high transition-colors">
+            <i data-lucide="arrow-left" class="w-4 h-4 text-on-surface-variant"></i>
+          </a>
+          <h1 class="text-xl font-bold text-on-surface">林若溪</h1>
+          <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已生成</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-edit-character" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all inline-flex items-center gap-2">
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>编辑
+          </button>
+          <button id="btn-generate-three-views" class="bg-primary text-on-primary border-none px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+            <i data-lucide="scan" class="w-3.5 h-3.5"></i>生成三视图
+          </button>
+          <button id="btn-delete-character" class="bg-surface-container text-error border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-error/10 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>删除
+          </button>
+        </div>
+      </div>
+
+      <!-- 主体内容区：三列布局 -->
+      <div class="grid grid-cols-12 gap-6">
+        <!-- 左侧：角色基础信息面板 -->
+        <div class="col-span-3 space-y-4">
+          <!-- 头像大图 -->
+          <div class="bg-surface rounded-lg shadow-card p-4">
+            <div class="relative aspect-[3/4] rounded-md overflow-hidden bg-surface-container">
+              <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&h=800&fit=crop" alt="林若溪角色正面参考图" data-category="人物" class="w-full h-full object-cover" />
+            </div>
+          </div>
+
+          <!-- 基础信息卡片 -->
+          <div class="bg-surface rounded-lg shadow-card p-4 space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-on-surface">林若溪</h2>
+              <p class="text-sm text-on-surface-variant mt-1">女 · 24岁 · 广告设计师</p>
+            </div>
+
+            <!-- 性格标签 -->
+            <div>
+              <p class="text-xs font-medium text-on-surface-variant uppercase tracking-wide mb-2">性格标签</p>
+              <div class="flex flex-wrap gap-2">
+                <!-- 标签-善良 -->
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-primary/15 text-primary">善良</span>
+                <!-- 标签-坚韧 -->
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-success/15 text-success">坚韧</span>
+                <!-- 标签-乐观 -->
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-warning/15 text-warning">乐观</span>
+                <!-- 标签-细腻 -->
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-info/15 text-info">细腻</span>
+                <!-- 标签-敏感 -->
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-surface-container-high text-on-surface-variant">敏感</span>
+              </div>
+            </div>
+
+            <!-- 详细描述 -->
+            <div>
+              <p class="text-xs font-medium text-on-surface-variant uppercase tracking-wide mb-2">角色描述</p>
+              <p class="text-sm text-on-surface-variant leading-relaxed">
+                林若溪是一名刚踏入广告行业的职场新人，性格善良而坚韧。面对工作中的挫折从不轻言放弃，始终保持乐观向上的态度。她心思细腻，善于观察生活中的细节，这也成为她设计灵感的源泉。从小在单亲家庭长大，让她比同龄人更加独立和懂事。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 中间：三视图展示区 -->
+        <div class="col-span-5">
+          <div class="bg-surface rounded-lg shadow-card p-4 h-full flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-base font-semibold text-on-surface">三视图</h2>
+              <span class="text-xs text-on-surface-variant">AI 生成 · 2024-01-15</span>
+            </div>
+
+            <!-- Tab 切换 -->
+            <div class="flex items-center gap-1 bg-surface-container rounded-md p-1 mb-4">
+              <button id="tab-front" class="flex-1 py-1.5 text-sm font-medium rounded-md bg-surface text-on-surface transition-colors" data-view="front">正面</button>
+              <button id="tab-side" class="flex-1 py-1.5 text-sm font-medium rounded-md text-on-surface-variant hover:text-on-surface transition-colors" data-view="side">侧面</button>
+              <button id="tab-back" class="flex-1 py-1.5 text-sm font-medium rounded-md text-on-surface-variant hover:text-on-surface transition-colors" data-view="back">背面</button>
+            </div>
+
+            <!-- 图片展示区域 -->
+            <div class="flex-1 relative rounded-md overflow-hidden bg-surface-container flex items-center justify-center min-h-[420px]">
+              <!-- 正面视图 -->
+              <div id="view-front" class="view-panel w-full h-full flex items-center justify-center p-4">
+                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&h=1000&fit=crop" alt="林若溪正面全身视图" data-category="人物" class="max-w-full max-h-full object-contain rounded-md" />
+              </div>
+              <!-- 侧面视图 -->
+              <div id="view-side" class="view-panel w-full h-full flex items-center justify-center p-4 hidden">
+                <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=800&h=1000&fit=crop" alt="林若溪侧面全身视图" data-category="人物" class="max-w-full max-h-full object-contain rounded-md" />
+              </div>
+              <!-- 背面视图 -->
+              <div id="view-back" class="view-panel w-full h-full flex items-center justify-center p-4 hidden">
+                <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&h=1000&fit=crop" alt="林若溪背面全身视图" data-category="人物" class="max-w-full max-h-full object-contain rounded-md" />
+              </div>
+            </div>
+
+            <!-- 底部操作提示 -->
+            <div class="mt-3 flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs text-on-surface-variant">
+                <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                <span>三视图用于保证角色在生成视频中的一致性</span>
+              </div>
+              <button id="btn-regenerate-views" class="text-primary text-xs font-medium hover:underline inline-flex items-center gap-1">
+                <i data-lucide="refresh-cw" class="w-3 h-3"></i>重新生成
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧：表情包区 -->
+        <div class="col-span-4">
+          <div class="bg-surface rounded-lg shadow-card p-4 h-full flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-base font-semibold text-on-surface">表情包</h2>
+              <button id="btn-add-expression" class="text-primary text-sm font-medium hover:underline inline-flex items-center gap-1">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>添加
+              </button>
+            </div>
+
+            <!-- 表情分类 Tab -->
+            <div class="flex items-center gap-1 bg-surface-container rounded-md p-1 mb-4">
+              <button id="tab-happy" class="flex-1 py-1.5 text-sm font-medium rounded-md bg-surface text-on-surface transition-colors" data-emotion="happy">开心</button>
+              <button id="tab-sad" class="flex-1 py-1.5 text-sm font-medium rounded-md text-on-surface-variant hover:text-on-surface transition-colors" data-emotion="sad">悲伤</button>
+              <button id="tab-angry" class="flex-1 py-1.5 text-sm font-medium rounded-md text-on-surface-variant hover:text-on-surface transition-colors" data-emotion="angry">愤怒</button>
+              <button id="tab-neutral" class="flex-1 py-1.5 text-sm font-medium rounded-md text-on-surface-variant hover:text-on-surface transition-colors" data-emotion="neutral">平静</button>
+            </div>
+
+            <!-- 表情图片网格 -->
+            <div class="flex-1 overflow-y-auto min-h-[380px]">
+              <!-- 开心表情 -->
+              <div id="emotion-happy" class="emotion-panel grid grid-cols-2 gap-3">
+                <!-- 表情-开心1 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&crop=face" alt="林若溪开心表情1" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-开心2 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop&crop=face" alt="林若溪开心表情2" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-开心3 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=400&fit=crop&crop=face" alt="林若溪开心表情3" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-开心4 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=400&fit=crop&crop=face" alt="林若溪开心表情4" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 悲伤表情 -->
+              <div id="emotion-sad" class="emotion-panel grid grid-cols-2 gap-3 hidden">
+                <!-- 表情-悲伤1 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=400&fit=crop&crop=face" alt="林若溪悲伤表情1" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-悲伤2 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400&h=400&fit=crop&crop=face" alt="林若溪悲伤表情2" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-悲伤3 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=400&h=400&fit=crop&crop=face" alt="林若溪悲伤表情3" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 愤怒表情 -->
+              <div id="emotion-angry" class="emotion-panel grid grid-cols-2 gap-3 hidden">
+                <!-- 表情-愤怒1 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=400&h=400&fit=crop&crop=face" alt="林若溪愤怒表情1" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-愤怒2 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop&crop=face" alt="林若溪愤怒表情2" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-愤怒3 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&crop=face" alt="林若溪愤怒表情3" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 平静表情 -->
+              <div id="emotion-neutral" class="emotion-panel grid grid-cols-2 gap-3 hidden">
+                <!-- 表情-平静1 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&crop=face" alt="林若溪平静表情1" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-平静2 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=400&fit=crop&crop=face" alt="林若溪平静表情2" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+                <!-- 表情-平静3 -->
+                <div class="aspect-square rounded-md overflow-hidden bg-surface-container relative group">
+                  <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=400&fit=crop&crop=face" alt="林若溪平静表情3" data-category="人物" class="w-full h-full object-cover" />
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-surface" data-action="preview">
+                      <i data-lucide="eye" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                    <button class="w-7 h-7 rounded-md bg-surface/80 flex items-center justify-center hover:bg-error/80" data-action="delete">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5 text-on-primary"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部一致性锚点 -->
+      <div class="mt-6 grid grid-cols-2 gap-6">
+        <!-- 关键特征 -->
+        <div class="bg-surface rounded-lg shadow-card p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-base font-semibold text-on-surface inline-flex items-center gap-2">
+              <i data-lucide="anchor" class="w-4 h-4 text-primary"></i>一致性锚点 · 关键特征
+            </h3>
+            <button id="btn-add-feature" class="text-primary text-xs font-medium hover:underline inline-flex items-center gap-1">
+              <i data-lucide="plus" class="w-3 h-3"></i>添加
+            </button>
+          </div>
+          <div id="feature-list" class="flex flex-wrap gap-2">
+            <!-- 特征-黑色长发 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              黑色长发
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 特征-丹凤眼 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              丹凤眼
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 特征-职场套装 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              职场套装
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 特征-银色项链 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              银色项链
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 特征-右手腕胎记 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              右手腕胎记
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 特征-米色风衣 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-surface-container text-on-surface">
+              米色风衣
+              <button class="feature-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 text-on-surface-variant hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+          </div>
+        </div>
+
+        <!-- 禁止动作 -->
+        <div class="bg-surface rounded-lg shadow-card p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-base font-semibold text-on-surface inline-flex items-center gap-2">
+              <i data-lucide="ban" class="w-4 h-4 text-error"></i>一致性锚点 · 禁止动作
+            </h3>
+            <button id="btn-add-forbidden" class="text-primary text-xs font-medium hover:underline inline-flex items-center gap-1">
+              <i data-lucide="plus" class="w-3 h-3"></i>添加
+            </button>
+          </div>
+          <div id="forbidden-list" class="flex flex-wrap gap-2">
+            <!-- 禁止-戴眼镜 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              戴眼镜
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 禁止-染发 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              染发
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 禁止-短发 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              短发
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 禁止-穿休闲装 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              穿休闲装
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 禁止-浓妆 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              浓妆
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+            <!-- 禁止-戴帽子 -->
+            <span class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-md text-sm bg-error/10 text-error border border-error/20">
+              戴帽子
+              <button class="forbidden-delete w-4 h-4 rounded-sm flex items-center justify-center hover:bg-error/20 hover:text-error transition-colors">
+                <i data-lucide="x" class="w-3 h-3"></i>
+              </button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end -->
+
+  <script>lucide.createIcons();</script>
+
+  <script>
+    $(function() {
+      // ==================== 三视图 Tab 切换 ====================
+      $('#tab-front, #tab-side, #tab-back').on('click', function() {
+        var view = $(this).data('view');
+        // 切换 Tab 样式
+        $('#tab-front, #tab-side, #tab-back').removeClass('bg-surface text-on-surface').addClass('text-on-surface-variant');
+        $(this).addClass('bg-surface text-on-surface').removeClass('text-on-surface-variant');
+        // 切换视图
+        $('.view-panel').addClass('hidden');
+        $('#view-' + view).removeClass('hidden');
+      });
+
+      // ==================== 表情包 Tab 切换 ====================
+      $('#tab-happy, #tab-sad, #tab-angry, #tab-neutral').on('click', function() {
+        var emotion = $(this).data('emotion');
+        // 切换 Tab 样式
+        $('#tab-happy, #tab-sad, #tab-angry, #tab-neutral').removeClass('bg-surface text-on-surface').addClass('text-on-surface-variant');
+        $(this).addClass('bg-surface text-on-surface').removeClass('text-on-surface-variant');
+        // 切换表情面板
+        $('.emotion-panel').addClass('hidden');
+        $('#emotion-' + emotion).removeClass('hidden');
+      });
+
+      // ==================== 表情图片删除 ====================
+      $('.emotion-panel').on('click', '[data-action="delete"]', function() {
+        // 删除当前表情图片所在的容器
+        $(this).closest('.aspect-square').remove();
+      });
+
+      // ==================== 表情图片预览 ====================
+      $('.emotion-panel').on('click', '[data-action="preview"]', function() {
+        // 预览功能 - 点击后应实现：
+        // 1. 创建一个全屏遮罩层，背景半透明黑色
+        // 2. 居中显示被点击的表情大图
+        // 3. 支持点击遮罩层或按 ESC 键关闭预览
+        // 4. 大图下方显示表情分类标签
+        console.log('预览表情图片');
+      });
+
+      // ==================== 关键特征删除 ====================
+      $('#feature-list').on('click', '.feature-delete', function() {
+        $(this).closest('span').remove();
+      });
+
+      // ==================== 禁止动作删除 ====================
+      $('#forbidden-list').on('click', '.forbidden-delete', function() {
+        $(this).closest('span').remove();
+      });
+
+      // ==================== 添加关键特征 ====================
+      $('#btn-add-feature').on('click', function() {
+        // 添加关键特征 - 点击后应实现内联输入：
+        // 1. 在 feature-list 末尾插入一个输入框（border-none bg-surface-container rounded-md）
+        // 2. 输入框自动聚焦，placeholder 显示"输入特征..."
+        // 3. 按 Enter 确认添加，按 ESC 取消
+        // 4. 确认后将输入内容转为标签样式添加到列表中
+        console.log('添加关键特征');
+      });
+
+      // ==================== 添加禁止动作 ====================
+      $('#btn-add-forbidden').on('click', function() {
+        // 添加禁止动作 - 点击后应实现内联输入：
+        // 1. 在 forbidden-list 末尾插入一个输入框（border-none bg-surface-container rounded-md）
+        // 2. 输入框自动聚焦，placeholder 显示"输入禁止动作..."
+        // 3. 按 Enter 确认添加，按 ESC 取消
+        // 4. 确认后将输入内容转为红色禁止标签样式添加到列表中
+        console.log('添加禁止动作');
+      });
+
+      // ==================== 编辑角色 ====================
+      $('#btn-edit-character').on('click', function() {
+        // 编辑角色 - 点击后应实现：
+        // 1. 弹出模态框或跳转到编辑页面
+        // 2. 模态框中包含角色名称、描述、性格标签等表单字段
+        // 3. 支持修改头像上传
+        // 4. 保存后更新当前页面显示的内容
+        console.log('编辑角色');
+      });
+
+      // ==================== 生成三视图 ====================
+      $('#btn-generate-three-views, #btn-regenerate-views').on('click', function() {
+        // 生成三视图 - 点击后应调用 AI 图像生成接口：
+        // 1. 显示生成进度状态（加载动画 + 进度提示）
+        // 2. 调用后端 /api/characters/:id/three-views 接口
+        // 3. 根据角色描述生成正面、侧面、背面三张全身视图
+        // 4. 生成完成后自动刷新图片展示
+        console.log('生成三视图');
+      });
+
+      // ==================== 删除角色 ====================
+      $('#btn-delete-character').on('click', function() {
+        // 删除角色 - 点击后应实现：
+        // 1. 弹出确认删除模态框，提示"删除后不可恢复"
+        // 2. 确认后调用 DELETE /api/characters/:id 接口
+        // 3. 删除成功后跳转回角色列表页 characters.html
+        console.log('删除角色');
+      });
+
+      // ==================== 添加表情 ====================
+      $('#btn-add-expression').on('click', function() {
+        // 添加表情 - 点击后应实现：
+        // 1. 弹出模态框选择表情分类和上传图片
+        // 2. 或调用 AI 接口基于当前角色生成指定表情
+        // 3. 生成/上传完成后添加到对应分类的表情网格中
+        console.log('添加表情');
+      });
+    });
+  </script>
+</body>
+
+</html>

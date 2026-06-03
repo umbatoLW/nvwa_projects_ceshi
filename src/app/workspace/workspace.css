@@ -1,0 +1,115 @@
+/* === React Flow 深色背景覆盖 === */
+/* 必须在 @xyflow/react/dist/style.css 之后导入 */
+
+.react-flow {
+  background: #0a0a0a !important;
+}
+
+.react-flow__background {
+  background: #0a0a0a !important;
+}
+
+.react-flow__background-pattern {
+  fill: #1a1a1a !important;
+}
+
+.react-flow__pane {
+  background: #0a0a0a !important;
+}
+
+.react-flow__viewport {
+  background: #0a0a0a !important;
+}
+
+.react-flow__container {
+  background: #0a0a0a !important;
+}
+
+/* 节点样式 */
+.react-flow__node,
+.react-flow__node-default,
+.react-flow__node.selected {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 12px !important;
+}
+
+/* 边创建模式下节点保持可见 - React Flow 在连接时给容器添加 .connecting 类 */
+.react-flow.connecting .react-flow__node {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 连接状态下的节点样式 - React Flow 默认会降低非连接节点的透明度 */
+.react-flow__node-connecting {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 作为连接目标的节点 */
+.react-flow__node-target {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 确保所有节点在连接过程中保持可见 */
+.react-flow.connecting .react-flow__node-connecting,
+.react-flow.connecting .react-flow__node-target,
+.react-flow.connecting .react-flow__node.selected {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 确保节点在拖拽时保持可见 */
+.react-flow__node {
+  transition: opacity 0.2s ease;
+}
+
+.react-flow__node.selected,
+.react-flow__node:hover {
+  opacity: 1;
+}
+
+/* 连线样式 */
+.react-flow__edge-path {
+  stroke: #555555 !important;
+  stroke-width: 1.5px !important;
+}
+
+.react-flow__edge-path:hover {
+  stroke: #0ABAB5;
+  stroke-width: 2;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: #0ABAB5 !important;
+  animation-duration: 1.2s !important;
+}
+
+/* 连接点 */
+.react-flow__handle {
+  border: 2px solid #0a0a0a !important;
+  background: #0ABAB5 !important;
+}
+
+/* 连接点拖拽时的样式 */
+.react-flow__handle-connecting {
+  background: #0ABAB5 !important;
+  box-shadow: 0 0 12px rgba(10, 186, 181, 0.6) !important;
+}
+
+/* 有效连接目标高亮 */
+.react-flow__handle-valid {
+  box-shadow: 0 0 16px rgba(10, 186, 181, 0.8) !important;
+}
+
+/* 拖拽连接时的临时边样式 */
+.react-flow__edge-updating {
+  opacity: 1 !important;
+}
+
+.react-flow__edge.updating .react-flow__edge-path {
+  stroke: #0ABAB5 !important;
+}

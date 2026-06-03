@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>仪表盘 — NVWA 女娲</title>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%230ABAB5">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <a href="home.html" class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </a>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航 -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary" aria-current="page">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+      <div class="max-w-7xl mx-auto">
+
+        <!-- 欢迎区 -->
+        <div class="mb-8">
+          <h1 class="text-2xl font-bold text-on-surface mb-1">你好，小初</h1>
+          <p class="text-sm text-on-surface-variant">今天是 2025年5月7日，继续你的创作之旅吧</p>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          <div class="bg-surface-container rounded-xl p-5 border border-outline-variant/20">
+            <div class="text-on-surface-variant text-sm mb-2">今日剧本</div>
+            <div class="text-3xl font-bold text-on-surface">12</div>
+            <div class="text-xs text-primary mt-1">↑ 较昨日 +3</div>
+          </div>
+          <div class="bg-surface-container rounded-xl p-5 border border-outline-variant/20">
+            <div class="text-on-surface-variant text-sm mb-2">今日分镜</div>
+            <div class="text-3xl font-bold text-on-surface">48</div>
+            <div class="text-xs text-primary mt-1">↑ 较昨日 +12</div>
+          </div>
+          <div class="bg-surface-container rounded-xl p-5 border border-outline-variant/20">
+            <div class="text-on-surface-variant text-sm mb-2">生成素材</div>
+            <div class="text-3xl font-bold text-on-surface">156</div>
+            <div class="text-xs text-primary mt-1">↑ 较昨日 +28</div>
+          </div>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="flex flex-wrap gap-3 mb-8">
+          <a href="scripts.html?action=new" id="btn-new-script" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-medium transition-all hover:bg-primary-container">
+            <i data-lucide="plus" class="w-4 h-4"></i>新建剧本
+          </a>
+          <a href="workspace.html?action=new" id="btn-new-workflow" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-surface-container-high text-on-surface text-sm font-medium transition-all hover:bg-surface-container-highest border border-outline-variant/20">
+            <i data-lucide="workflow" class="w-4 h-4"></i>创建工作流
+          </a>
+          <a href="characters.html?action=new" id="btn-new-character" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-surface-container-high text-on-surface text-sm font-medium transition-all hover:bg-surface-container-highest border border-outline-variant/20">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>生成角色
+          </a>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+          <!-- 左侧：最近项目 + 趋势 -->
+          <div class="flex-1 min-w-0 space-y-6">
+            <!-- 最近项目 -->
+            <div class="bg-surface-container rounded-xl border border-outline-variant/20 p-5">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-base font-semibold text-on-surface">最近项目</h2>
+                <a href="scripts.html" class="text-sm text-primary hover:underline">查看全部</a>
+              </div>
+              <div class="space-y-3">
+                <div class="project-card flex items-center gap-4 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer" data-type="script">
+                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="file-text" class="w-5 h-5 text-primary"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-on-surface truncate">都市甜宠：总裁的契约新娘</div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary">剧本</span>
+                      <span class="text-xs text-on-surface-variant">2小时前</span>
+                    </div>
+                  </div>
+                  <div class="w-24 shrink-0">
+                    <div class="h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div class="h-full rounded-full bg-primary" style="width: 85%"></div>
+                    </div>
+                    <div class="text-xs text-on-surface-variant mt-1 text-right">85%</div>
+                  </div>
+                </div>
+                <div class="project-card flex items-center gap-4 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer" data-type="script">
+                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="file-text" class="w-5 h-5 text-primary"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-on-surface truncate">悬疑短剧：消失的证人</div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary">剧本</span>
+                      <span class="text-xs text-on-surface-variant">5小时前</span>
+                    </div>
+                  </div>
+                  <div class="w-24 shrink-0">
+                    <div class="h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div class="h-full rounded-full bg-primary" style="width: 60%"></div>
+                    </div>
+                    <div class="text-xs text-on-surface-variant mt-1 text-right">60%</div>
+                  </div>
+                </div>
+                <div class="project-card flex items-center gap-4 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer" data-type="workflow">
+                  <div class="w-10 h-10 rounded-lg bg-info/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="workflow" class="w-5 h-5 text-info"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-on-surface truncate">古风穿越：神医毒妃</div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-info/15 text-info">工作流</span>
+                      <span class="text-xs text-on-surface-variant">昨天</span>
+                    </div>
+                  </div>
+                  <div class="w-24 shrink-0">
+                    <div class="h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div class="h-full rounded-full bg-info" style="width: 40%"></div>
+                    </div>
+                    <div class="text-xs text-on-surface-variant mt-1 text-right">40%</div>
+                  </div>
+                </div>
+                <div class="project-card flex items-center gap-4 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer" data-type="script">
+                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="file-text" class="w-5 h-5 text-primary"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-on-surface truncate">复仇爽剧：千金归来</div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary">剧本</span>
+                      <span class="text-xs text-on-surface-variant">2天前</span>
+                    </div>
+                  </div>
+                  <div class="w-24 shrink-0">
+                    <div class="h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div class="h-full rounded-full bg-primary" style="width: 92%"></div>
+                    </div>
+                    <div class="text-xs text-on-surface-variant mt-1 text-right">92%</div>
+                  </div>
+                </div>
+                <div class="project-card flex items-center gap-4 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer" data-type="character">
+                  <div class="w-10 h-10 rounded-lg bg-warning/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="users" class="w-5 h-5 text-warning"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-on-surface truncate">玄幻修真：逆天剑神</div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-warning/15 text-warning">角色集</span>
+                      <span class="text-xs text-on-surface-variant">3天前</span>
+                    </div>
+                  </div>
+                  <div class="w-24 shrink-0">
+                    <div class="h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div class="h-full rounded-full bg-warning" style="width: 30%"></div>
+                    </div>
+                    <div class="text-xs text-on-surface-variant mt-1 text-right">30%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 创作趋势 -->
+            <div class="bg-surface-container rounded-xl border border-outline-variant/20 p-5">
+              <h2 class="text-base font-semibold text-on-surface mb-4">创作趋势（近7天）</h2>
+              <div class="flex items-end justify-between gap-3 h-36">
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">65</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 54%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周一</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">72</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 60%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周二</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">58</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 48%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周三</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">81</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 67%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周四</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">90</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 75%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary rounded-t-md transition-all group-hover:bg-primary-container" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周五</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">45</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 38%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周六</span>
+                </div>
+                <div class="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
+                  <span class="text-xs text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">68</span>
+                  <div class="w-full bg-surface-container-high rounded-t-md relative overflow-hidden" style="height: 57%;">
+                    <div class="absolute bottom-0 left-0 right-0 bg-primary/70 rounded-t-md transition-all group-hover:bg-primary" style="height: 100%;"></div>
+                  </div>
+                  <span class="text-xs text-on-surface-variant">周日</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧边栏 -->
+          <div class="w-full lg:w-72 shrink-0 space-y-6">
+            <!-- 系统公告 -->
+            <div class="bg-surface-container rounded-xl border border-outline-variant/20 p-5">
+              <h2 class="text-base font-semibold text-on-surface mb-4">系统公告</h2>
+              <div class="space-y-3">
+                <div class="flex gap-3">
+                  <div class="w-1.5 h-1.5 rounded-full bg-primary mt-2 shrink-0"></div>
+                  <div>
+                    <div class="text-sm text-on-surface">系统更新完成</div>
+                    <div class="text-xs text-on-surface-variant mt-0.5">V2.1 版本已上线，新增文生视频功能</div>
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-1.5 h-1.5 rounded-full bg-warning mt-2 shrink-0"></div>
+                  <div>
+                    <div class="text-sm text-on-surface">限时活动</div>
+                    <div class="text-xs text-on-surface-variant mt-0.5">新用户注册送 1000 积分</div>
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-1.5 h-1.5 rounded-full bg-success mt-2 shrink-0"></div>
+                  <div>
+                    <div class="text-sm text-on-surface">服务状态正常</div>
+                    <div class="text-xs text-on-surface-variant mt-0.5">所有服务运行正常</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 推荐模板 -->
+            <div class="bg-surface-container rounded-xl border border-outline-variant/20 p-5">
+              <h2 class="text-base font-semibold text-on-surface mb-4">推荐模板</h2>
+              <div class="space-y-3">
+                <div class="template-item flex items-center gap-3 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer">
+                  <div class="w-9 h-9 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="heart" class="w-4 h-4 text-primary"></i>
+                  </div>
+                  <div>
+                    <div class="text-sm font-medium text-on-surface">都市甜宠</div>
+                    <div class="text-xs text-on-surface-variant">霸总/契约/闪婚</div>
+                  </div>
+                </div>
+                <div class="template-item flex items-center gap-3 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer">
+                  <div class="w-9 h-9 rounded-lg bg-info/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="search" class="w-4 h-4 text-info"></i>
+                  </div>
+                  <div>
+                    <div class="text-sm font-medium text-on-surface">悬疑推理</div>
+                    <div class="text-xs text-on-surface-variant">探案/反转/烧脑</div>
+                  </div>
+                </div>
+                <div class="template-item flex items-center gap-3 p-3 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors cursor-pointer">
+                  <div class="w-9 h-9 rounded-lg bg-warning/15 flex items-center justify-center shrink-0">
+                    <i data-lucide="crown" class="w-4 h-4 text-warning"></i>
+                  </div>
+                  <div>
+                    <div class="text-sm font-medium text-on-surface">古风穿越</div>
+                    <div class="text-xs text-on-surface-variant">宫斗/重生/逆袭</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 快捷入口 -->
+            <div class="bg-surface-container rounded-xl border border-outline-variant/20 p-5">
+              <h2 class="text-base font-semibold text-on-surface mb-4">快捷入口</h2>
+              <div class="grid grid-cols-2 gap-2">
+                <a href="workspace.html" class="flex items-center gap-2 p-2.5 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors text-sm text-on-surface">
+                  <i data-lucide="workflow" class="w-4 h-4 text-primary"></i>工作流
+                </a>
+                <a href="scripts.html" class="flex items-center gap-2 p-2.5 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors text-sm text-on-surface">
+                  <i data-lucide="file-text" class="w-4 h-4 text-primary"></i>剧本
+                </a>
+                <a href="characters.html" class="flex items-center gap-2 p-2.5 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors text-sm text-on-surface">
+                  <i data-lucide="users" class="w-4 h-4 text-primary"></i>角色
+                </a>
+                <a href="assets.html" class="flex items-center gap-2 p-2.5 rounded-lg bg-surface/50 hover:bg-surface-container-high transition-colors text-sm text-on-surface">
+                  <i data-lucide="image" class="w-4 h-4 text-primary"></i>资产
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    // 项目卡片点击跳转
+    $('.project-card').on('click', function() {
+      const type = $(this).data('type');
+      if (type === 'script') {
+        window.location.href = 'script-detail.html?id=demo';
+      } else if (type === 'workflow') {
+        window.location.href = 'workspace.html?project=demo';
+      } else if (type === 'character') {
+        window.location.href = 'character-detail.html?id=demo';
+      }
+    });
+
+    // 模板点击
+    $('.template-item').on('click', function() {
+      window.location.href = 'scripts.html?template=demo';
+    });
+  </script>
+</body>
+</html>

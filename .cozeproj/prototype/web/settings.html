@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    /* 设置分类Tab激活态 - 左侧蓝色竖条 */
+    .settings-tab-active {
+      position: relative;
+      color: #F5F5F5 !important;
+      font-weight: 600;
+    }
+    .settings-tab-active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 20px;
+      background-color: #0ABAB5;
+      border-radius: 0 2px 2px 0;
+    }
+    /* Toggle开关样式 */
+    .toggle-track {
+      width: 40px;
+      height: 22px;
+      background-color: #333333;
+      border-radius: 9999px;
+      position: relative;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    .toggle-track.active {
+      background-color: #0ABAB5;
+    }
+    .toggle-thumb {
+      width: 18px;
+      height: 18px;
+      background-color: #F5F5F5;
+      border-radius: 9999px;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s ease;
+    }
+    .toggle-track.active .toggle-thumb {
+      transform: translateX(18px);
+    }
+    /* 滑块样式 */
+    .range-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      background-color: #333333;
+      border-radius: 2px;
+      outline: none;
+    }
+    .range-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      background-color: #0ABAB5;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    .range-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background-color: #0ABAB5;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+    /* 主题卡片选中态 */
+    .theme-card-selected {
+      border-color: #0ABAB5 !important;
+      background-color: rgba(59, 130, 246, 0.1) !important;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start 导航组件，不需要的页面则不要复制此段 -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航（参考Vidu/LibLib） -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-primary bg-primary/10" aria-current="page">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+      <!-- 设置页面标题 -->
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-on-surface">设置</h1>
+        <p class="text-sm text-on-surface-variant mt-1">管理您的个人资料、AI模型和工作流偏好</p>
+      </div>
+
+      <!-- 设置页面主体：左侧分类Tab + 右侧面板 -->
+      <div class="flex gap-6" style="min-height: calc(100vh - 10rem);">
+        <!-- 左侧设置分类Tab -->
+        <div class="w-52 shrink-0">
+          <div class="bg-surface rounded-lg shadow-card p-2 space-y-0.5 sticky top-0">
+            <!-- Tab-个人资料 -->
+            <button id="tab-profile" class="settings-tab-active w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface transition-colors hover:bg-surface-container" data-panel="panel-profile">
+              <i data-lucide="user" class="w-4 h-4"></i>
+              个人资料
+            </button>
+            <!-- Tab-AI模型配置 -->
+            <button id="tab-ai-model" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface" data-panel="panel-ai-model">
+              <i data-lucide="cpu" class="w-4 h-4"></i>
+              AI模型配置
+            </button>
+            <!-- Tab-工作流偏好 -->
+            <button id="tab-workflow" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface" data-panel="panel-workflow">
+              <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
+              工作流偏好
+            </button>
+            <!-- Tab-通知设置 -->
+            <button id="tab-notification" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface" data-panel="panel-notification">
+              <i data-lucide="bell-ring" class="w-4 h-4"></i>
+              通知设置
+            </button>
+            <!-- Tab-安全设置 -->
+            <button id="tab-security" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface" data-panel="panel-security">
+              <i data-lucide="shield" class="w-4 h-4"></i>
+              安全设置
+            </button>
+            <!-- Tab-主题设置 -->
+            <button id="tab-theme" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface" data-panel="panel-theme">
+              <i data-lucide="palette" class="w-4 h-4"></i>
+              主题设置
+            </button>
+          </div>
+        </div>
+
+        <!-- 右侧设置面板区域 -->
+        <div class="flex-1 min-w-0 space-y-6">
+
+          <!-- 面板-个人资料 -->
+          <div id="panel-profile" class="settings-panel bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">个人资料</h2>
+            <div class="space-y-6">
+              <!-- 头像区域 -->
+              <div class="flex items-center gap-4">
+                <div id="user-avatar" class="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xl font-medium cursor-pointer hover:bg-surface-container-highest transition-colors">
+                  初
+                </div>
+                <div>
+                  <p class="text-sm font-medium text-on-surface">头像</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">点击头像上传新图片，支持 JPG、PNG 格式</p>
+                  <button id="btn-upload-avatar" class="mt-2 text-xs text-primary font-medium hover:underline">更换头像</button>
+                </div>
+              </div>
+              <!-- 昵称输入框 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">昵称</label>
+                <input id="input-nickname" type="text" value="小初" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请输入昵称" />
+              </div>
+              <!-- 邮箱输入框 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">邮箱</label>
+                <input id="input-email" type="email" value="chuxiaochu@nvwa.ai" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请输入邮箱地址" />
+              </div>
+              <!-- 个人简介 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">个人简介</label>
+                <textarea id="input-bio" rows="3" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors resize-none" placeholder="介绍一下你自己...">AI短剧创作者，专注于都市甜宠题材</textarea>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-2">
+                <button id="btn-save-profile" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  保存修改
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板-AI模型配置 -->
+          <div id="panel-ai-model" class="settings-panel hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">AI模型配置</h2>
+            <div class="space-y-6">
+              <!-- 文本模型下拉选择器 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">文本生成模型</label>
+                <div class="relative">
+                  <select id="select-text-model" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors appearance-none cursor-pointer">
+                    <option value="zhipu-glm4">智谱 GLM-4-Flash（免费）</option>
+                    <option value="deepseek-v3">DeepSeek-V3（高性价比）</option>
+                    <option value="gpt-4o" selected>GPT-4o（高质量）</option>
+                    <option value="claude-3">Claude 3.5 Sonnet</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-on-surface-variant absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                </div>
+                <p class="text-xs text-on-surface-variant">用于剧本生成、大纲扩展和文本润色</p>
+              </div>
+              <!-- 图像模型下拉选择器 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">图像生成模型</label>
+                <div class="relative">
+                  <select id="select-image-model" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors appearance-none cursor-pointer">
+                    <option value="nano-banana">Nano Banana（低成本）</option>
+                    <option value="jimeng" selected>即梦 AI 4.0（推荐）</option>
+                    <option value="dalle">GPT-4o Image（高质量）</option>
+                    <option value="midjourney">Midjourney v6</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-on-surface-variant absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                </div>
+                <p class="text-xs text-on-surface-variant">用于角色生成、场景图和分镜图创作</p>
+              </div>
+              <!-- 视频模型下拉选择器 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">视频生成模型</label>
+                <div class="relative">
+                  <select id="select-video-model" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors appearance-none cursor-pointer">
+                    <option value="kling" selected>可灵 3.0 Omni（推荐）</option>
+                    <option value="veo">Veo 3.1 Lite</option>
+                    <option value="jimeng-video">即梦 4.0 视频</option>
+                    <option value="pika">Pika 2.0</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-on-surface-variant absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                </div>
+                <p class="text-xs text-on-surface-variant">用于图生视频和动态分镜生成</p>
+              </div>
+              <!-- API Key输入框 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">API Key</label>
+                <div class="relative">
+                  <input id="input-api-key" type="password" value="sk-nvwa-xxxxxxxxxxxxxxxxxxxx" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 pr-10 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请输入您的 API Key" />
+                  <button id="btn-toggle-api-key" class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                  </button>
+                </div>
+                <p class="text-xs text-on-surface-variant">您的 API Key 将加密存储，仅用于调用 AI 服务</p>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-2">
+                <button id="btn-save-ai-model" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  保存配置
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板-工作流偏好 -->
+          <div id="panel-workflow" class="settings-panel hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">工作流偏好</h2>
+            <div class="space-y-6">
+              <!-- 画布尺寸选择 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">默认画布尺寸</label>
+                <div class="grid grid-cols-3 gap-3">
+                  <!-- 画布选项-横屏16:9 -->
+                  <button id="canvas-16-9" class="canvas-option flex flex-col items-center gap-2 p-4 rounded-lg border border-outline-variant/20 bg-surface-container hover:border-primary/50 transition-colors" data-value="16:9">
+                    <div class="w-12 h-7 rounded border border-on-surface-variant/30 flex items-center justify-center">
+                      <span class="text-xs text-on-surface-variant">16:9</span>
+                    </div>
+                    <span class="text-xs text-on-surface-variant">横屏</span>
+                  </button>
+                  <!-- 画布选项-竖屏9:16 -->
+                  <button id="canvas-9-16" class="canvas-option theme-card-selected flex flex-col items-center gap-2 p-4 rounded-lg border border-outline-variant/20 bg-surface-container hover:border-primary/50 transition-colors" data-value="9:16">
+                    <div class="w-7 h-12 rounded border border-primary flex items-center justify-center">
+                      <span class="text-xs text-primary">9:16</span>
+                    </div>
+                    <span class="text-xs text-on-surface">竖屏</span>
+                  </button>
+                  <!-- 画布选项-方形1:1 -->
+                  <button id="canvas-1-1" class="canvas-option flex flex-col items-center gap-2 p-4 rounded-lg border border-outline-variant/20 bg-surface-container hover:border-primary/50 transition-colors" data-value="1:1">
+                    <div class="w-9 h-9 rounded border border-on-surface-variant/30 flex items-center justify-center">
+                      <span class="text-xs text-on-surface-variant">1:1</span>
+                    </div>
+                    <span class="text-xs text-on-surface-variant">方形</span>
+                  </button>
+                </div>
+                <p class="text-xs text-on-surface-variant">新工作流创建时的默认画布比例</p>
+              </div>
+              <!-- 自动保存间隔滑块 -->
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <label class="text-sm font-medium text-on-surface">自动保存间隔</label>
+                  <span id="autosave-value" class="text-sm text-primary font-medium">5 分钟</span>
+                </div>
+                <input id="slider-autosave" type="range" min="1" max="10" value="5" class="range-slider" />
+                <div class="flex justify-between text-xs text-on-surface-variant">
+                  <span>1分钟</span>
+                  <span>10分钟</span>
+                </div>
+              </div>
+              <!-- 默认导出格式 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">默认导出格式</label>
+                <div class="relative">
+                  <select id="select-export-format" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors appearance-none cursor-pointer">
+                    <option value="mp4" selected>MP4 视频</option>
+                    <option value="mov">MOV 视频</option>
+                    <option value="png-sequence">PNG 序列帧</option>
+                    <option value="project">项目文件 (.nvwa)</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-on-surface-variant absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                </div>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-2">
+                <button id="btn-save-workflow" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  保存偏好
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板-通知设置 -->
+          <div id="panel-notification" class="settings-panel hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">通知设置</h2>
+            <div class="space-y-5">
+              <!-- 通知项-任务完成 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">AI任务完成通知</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">剧本生成、角色生成等任务完成后推送通知</p>
+                </div>
+                <div id="toggle-task-complete" class="toggle-track active">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 通知项-红线检测结果 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">红线检测结果</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">内容安全检测完成后推送结果</p>
+                </div>
+                <div id="toggle-redline" class="toggle-track active">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 通知项-团队协作 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">团队协作消息</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">成员邀请、项目分享等团队相关通知</p>
+                </div>
+                <div id="toggle-team" class="toggle-track active">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 通知项-积分变动 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">积分变动提醒</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">积分消耗、充值和奖励到账通知</p>
+                </div>
+                <div id="toggle-points" class="toggle-track">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 通知项-产品更新 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">产品更新动态</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">新功能上线、模型更新等产品公告</p>
+                </div>
+                <div id="toggle-product-update" class="toggle-track">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 通知项-邮件订阅 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">邮件通知</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">同时发送邮件到注册邮箱</p>
+                </div>
+                <div id="toggle-email" class="toggle-track active">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-3 border-t border-outline-variant/20">
+                <button id="btn-save-notification" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  保存设置
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板-安全设置 -->
+          <div id="panel-security" class="settings-panel hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">安全设置</h2>
+            <div class="space-y-6">
+              <!-- 当前密码 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">当前密码</label>
+                <div class="relative">
+                  <input id="input-current-password" type="password" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 pr-10 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请输入当前密码" />
+                  <button id="btn-toggle-current-pwd" class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+              <!-- 新密码 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">新密码</label>
+                <div class="relative">
+                  <input id="input-new-password" type="password" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 pr-10 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请输入新密码（至少8位）" />
+                  <button id="btn-toggle-new-pwd" class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+              <!-- 确认新密码 -->
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-on-surface">确认新密码</label>
+                <div class="relative">
+                  <input id="input-confirm-password" type="password" class="w-full bg-surface-container border-none rounded-md px-3 py-2.5 pr-10 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" placeholder="请再次输入新密码" />
+                  <button id="btn-toggle-confirm-pwd" class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+              <!-- 双因素认证 -->
+              <div class="flex items-center justify-between py-3 border-t border-outline-variant/20">
+                <div>
+                  <p class="text-sm font-medium text-on-surface">双因素认证 (2FA)</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">通过验证码增强账户安全性</p>
+                </div>
+                <div id="toggle-2fa" class="toggle-track">
+                  <div class="toggle-thumb"></div>
+                </div>
+              </div>
+              <!-- 登录设备管理 -->
+              <div class="py-3 border-t border-outline-variant/20">
+                <p class="text-sm font-medium text-on-surface mb-3">已登录设备</p>
+                <div class="space-y-3">
+                  <!-- 设备1 -->
+                  <div class="flex items-center justify-between p-3 rounded-md bg-surface-container">
+                    <div class="flex items-center gap-3">
+                      <i data-lucide="monitor" class="w-4 h-4 text-on-surface-variant"></i>
+                      <div>
+                        <p class="text-sm text-on-surface">Windows PC - Chrome</p>
+                        <p class="text-xs text-on-surface-variant">北京 · 当前设备</p>
+                      </div>
+                    </div>
+                    <span class="text-xs text-success font-medium">在线</span>
+                  </div>
+                  <!-- 设备2 -->
+                  <div class="flex items-center justify-between p-3 rounded-md bg-surface-container">
+                    <div class="flex items-center gap-3">
+                      <i data-lucide="smartphone" class="w-4 h-4 text-on-surface-variant"></i>
+                      <div>
+                        <p class="text-sm text-on-surface">iPhone 15 Pro</p>
+                        <p class="text-xs text-on-surface-variant">上海 · 3天前</p>
+                      </div>
+                    </div>
+                    <button id="btn-logout-device-1" class="text-xs text-error font-medium hover:underline">退出登录</button>
+                  </div>
+                </div>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-2">
+                <button id="btn-save-security" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  更新密码
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板-主题设置 -->
+          <div id="panel-theme" class="settings-panel hidden bg-surface rounded-lg shadow-card p-6">
+            <h2 class="text-base font-semibold text-on-surface mb-6">主题设置</h2>
+            <div class="space-y-6">
+              <!-- 主题选择卡片 -->
+              <div class="grid grid-cols-3 gap-4">
+                <!-- 深色主题卡片 -->
+                <button id="theme-dark" class="theme-card theme-card-selected flex flex-col items-center gap-3 p-5 rounded-xl border-2 border-primary bg-primary/5 transition-all hover:border-primary/70" data-theme="dark">
+                  <div class="w-full h-20 rounded-lg bg-[#0A0A0A] border border-outline-variant/20 flex items-center justify-center">
+                    <div class="w-8 h-8 rounded-md bg-[#1A1A1A] border border-[#333333]"></div>
+                  </div>
+                  <div class="text-center">
+                    <p class="text-sm font-medium text-on-surface">深色模式</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">始终使用深色主题</p>
+                  </div>
+                </button>
+                <!-- 浅色主题卡片 -->
+                <button id="theme-light" class="theme-card flex flex-col items-center gap-3 p-5 rounded-xl border-2 border-outline-variant/20 bg-surface-container transition-all hover:border-primary/50" data-theme="light">
+                  <div class="w-full h-20 rounded-lg bg-[#F5F5F5] border border-[#E5E5E5] flex items-center justify-center">
+                    <div class="w-8 h-8 rounded-md bg-white border border-[#D4D4D4]"></div>
+                  </div>
+                  <div class="text-center">
+                    <p class="text-sm font-medium text-on-surface">浅色模式</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">始终使用浅色主题</p>
+                  </div>
+                </button>
+                <!-- 跟随系统卡片 -->
+                <button id="theme-system" class="theme-card flex flex-col items-center gap-3 p-5 rounded-xl border-2 border-outline-variant/20 bg-surface-container transition-all hover:border-primary/50" data-theme="system">
+                  <div class="w-full h-20 rounded-lg bg-[#0A0A0A] border border-outline-variant/20 flex items-center justify-center overflow-hidden relative">
+                    <div class="absolute inset-0 bg-[#F5F5F5]" style="clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);"></div>
+                    <div class="w-8 h-8 rounded-md bg-[#1A1A1A] border border-[#333333] relative z-10" style="margin-right: 8px;"></div>
+                  </div>
+                  <div class="text-center">
+                    <p class="text-sm font-medium text-on-surface">跟随系统</p>
+                    <p class="text-xs text-on-surface-variant mt-0.5">自动适配系统主题</p>
+                  </div>
+                </button>
+              </div>
+              <!-- 强调色选择 -->
+              <div class="space-y-3 pt-4 border-t border-outline-variant/20">
+                <label class="text-sm font-medium text-on-surface">强调色</label>
+                <div class="flex items-center gap-3">
+                  <button id="accent-blue" class="accent-option w-8 h-8 rounded-full bg-[#0ABAB5] ring-2 ring-offset-2 ring-offset-surface ring-primary transition-all" data-accent="blue"></button>
+                  <button id="accent-purple" class="accent-option w-8 h-8 rounded-full bg-[#8B5CF6] ring-2 ring-offset-2 ring-offset-surface ring-transparent hover:ring-[#8B5CF6] transition-all" data-accent="purple"></button>
+                  <button id="accent-cyan" class="accent-option w-8 h-8 rounded-full bg-[#33CCCC] ring-2 ring-offset-2 ring-offset-surface ring-transparent hover:ring-[#33CCCC] transition-all" data-accent="cyan"></button>
+                  <button id="accent-green" class="accent-option w-8 h-8 rounded-full bg-[#22C55E] ring-2 ring-offset-2 ring-offset-surface ring-transparent hover:ring-[#22C55E] transition-all" data-accent="green"></button>
+                  <button id="accent-orange" class="accent-option w-8 h-8 rounded-full bg-[#F59E0B] ring-2 ring-offset-2 ring-offset-surface ring-transparent hover:ring-[#F59E0B] transition-all" data-accent="orange"></button>
+                </div>
+              </div>
+              <!-- 保存按钮 -->
+              <div class="pt-2">
+                <button id="btn-save-theme" class="bg-primary text-on-primary px-6 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">
+                  应用主题
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end 导航组件，不需要的页面则不要复制此段 -->
+
+  <script>
+    $(function() {
+      // === Tab 切换逻辑 ===
+      // 点击左侧设置分类Tab时，切换右侧面板显示，并更新Tab激活态
+      // 激活态特征：左侧蓝色竖条 + 白色文字高亮
+      $('.settings-tab-active, [id^="tab-"]').on('click', function() {
+        var $clicked = $(this);
+        var panelId = $clicked.data('panel');
+
+        // 移除所有Tab激活态
+        $('[id^="tab-"]').removeClass('settings-tab-active')
+          .addClass('text-on-surface-variant')
+          .removeClass('text-on-surface');
+
+        // 设置当前Tab激活态
+        $clicked.addClass('settings-tab-active')
+          .removeClass('text-on-surface-variant')
+          .addClass('text-on-surface');
+
+        // 切换面板显示
+        $('.settings-panel').addClass('hidden');
+        $('#' + panelId).removeClass('hidden');
+      });
+
+      // === Toggle 开关交互 ===
+      // 点击Toggle轨道时切换active状态，同时移动thumb位置
+      // active态：轨道背景变为蓝色(#0ABAB5)，thumb向右移动18px
+      $('.toggle-track').on('click', function() {
+        $(this).toggleClass('active');
+      });
+
+      // === API Key 显示/隐藏 ===
+      $('#btn-toggle-api-key').on('click', function() {
+        var $input = $('#input-api-key');
+        var $icon = $(this).find('i');
+        if ($input.attr('type') === 'password') {
+          $input.attr('type', 'text');
+          $icon.attr('data-lucide', 'eye-off');
+        } else {
+          $input.attr('type', 'password');
+          $icon.attr('data-lucide', 'eye');
+        }
+        lucide.createIcons();
+      });
+
+      // === 密码显示/隐藏 ===
+      $('#btn-toggle-current-pwd').on('click', function() {
+        var $input = $('#input-current-password');
+        var $icon = $(this).find('i');
+        $input.attr('type', $input.attr('type') === 'password' ? 'text' : 'password');
+        $icon.attr('data-lucide', $input.attr('type') === 'password' ? 'eye' : 'eye-off');
+        lucide.createIcons();
+      });
+      $('#btn-toggle-new-pwd').on('click', function() {
+        var $input = $('#input-new-password');
+        var $icon = $(this).find('i');
+        $input.attr('type', $input.attr('type') === 'password' ? 'text' : 'password');
+        $icon.attr('data-lucide', $input.attr('type') === 'password' ? 'eye' : 'eye-off');
+        lucide.createIcons();
+      });
+      $('#btn-toggle-confirm-pwd').on('click', function() {
+        var $input = $('#input-confirm-password');
+        var $icon = $(this).find('i');
+        $input.attr('type', $input.attr('type') === 'password' ? 'text' : 'password');
+        $icon.attr('data-lucide', $input.attr('type') === 'password' ? 'eye' : 'eye-off');
+        lucide.createIcons();
+      });
+
+      // === 自动保存间隔滑块 ===
+      $('#slider-autosave').on('input', function() {
+        var val = $(this).val();
+        $('#autosave-value').text(val + ' 分钟');
+      });
+
+      // === 画布尺寸选择 ===
+      // 点击画布尺寸选项时，移除其他选项的选中态，为当前选项添加蓝色边框选中态
+      $('.canvas-option').on('click', function() {
+        $('.canvas-option').removeClass('theme-card-selected')
+          .find('div').removeClass('border-primary').addClass('border-on-surface-variant/30');
+        $('.canvas-option').find('span').removeClass('text-primary').addClass('text-on-surface-variant');
+        $(this).addClass('theme-card-selected')
+          .find('div').removeClass('border-on-surface-variant/30').addClass('border-primary');
+        $(this).find('span').removeClass('text-on-surface-variant').addClass('text-primary');
+      });
+
+      // === 主题卡片选择 ===
+      // 点击主题卡片时，移除其他卡片的选中态，为当前卡片添加蓝色边框和淡蓝色背景
+      $('.theme-card').on('click', function() {
+        $('.theme-card').removeClass('theme-card-selected border-primary bg-primary/5')
+          .addClass('border-outline-variant/20 bg-surface-container');
+        $(this).removeClass('border-outline-variant/20 bg-surface-container')
+          .addClass('theme-card-selected border-primary bg-primary/5');
+      });
+
+      // === 强调色选择 ===
+      // 点击强调色圆点时，为当前圆点添加对应颜色的ring边框，移除其他圆点的ring
+      $('.accent-option').on('click', function() {
+        var accentColor = $(this).data('accent');
+        var colorMap = {
+          'blue': '#0ABAB5',
+          'purple': '#8B5CF6',
+          'cyan': '#33CCCC',
+          'green': '#22C55E',
+          'orange': '#F59E0B'
+        };
+        $('.accent-option').removeClass('ring-primary').addClass('ring-transparent');
+        $(this).removeClass('ring-transparent').css('ring-color', colorMap[accentColor]);
+        // 使用内联样式无法直接设置ring-color，通过添加类名方式处理
+        $(this).attr('style', '--tw-ring-color: ' + colorMap[accentColor]);
+        $(this).removeClass('ring-transparent').addClass('ring-primary');
+      });
+
+      // === 保存按钮事件 ===
+      // 保存个人资料 - 点击后应实现：
+      // 1. 收集表单数据（昵称、邮箱、个人简介）
+      // 2. 前端校验邮箱格式
+      // 3. 调用API保存用户资料
+      // 4. 显示成功提示（Toast）
+      $('#btn-save-profile').on('click', function() {
+        console.log('保存个人资料:', {
+          nickname: $('#input-nickname').val(),
+          email: $('#input-email').val(),
+          bio: $('#input-bio').val()
+        });
+      });
+
+      // 保存AI模型配置 - 点击后应实现：
+      // 1. 收集三个模型选择和API Key
+      // 2. 校验API Key格式
+      // 3. 调用API保存AI配置到用户设置
+      // 4. 更新全局AI服务配置
+      $('#btn-save-ai-model').on('click', function() {
+        console.log('保存AI模型配置:', {
+          textModel: $('#select-text-model').val(),
+          imageModel: $('#select-image-model').val(),
+          videoModel: $('#select-video-model').val(),
+          apiKey: $('#input-api-key').val()
+        });
+      });
+
+      // 保存工作流偏好 - 点击后应实现：
+      // 1. 收集画布尺寸、自动保存间隔、导出格式
+      // 2. 调用API保存工作流偏好设置
+      // 3. 更新本地工作流默认配置
+      $('#btn-save-workflow').on('click', function() {
+        console.log('保存工作流偏好:', {
+          canvasSize: $('.canvas-option.theme-card-selected').data('value'),
+          autoSaveInterval: $('#slider-autosave').val(),
+          exportFormat: $('#select-export-format').val()
+        });
+      });
+
+      // 保存通知设置 - 点击后应实现：
+      // 1. 收集所有Toggle开关状态
+      // 2. 调用API保存通知偏好
+      // 3. 更新本地推送通知配置
+      $('#btn-save-notification').on('click', function() {
+        console.log('保存通知设置:', {
+          taskComplete: $('#toggle-task-complete').hasClass('active'),
+          redline: $('#toggle-redline').hasClass('active'),
+          team: $('#toggle-team').hasClass('active'),
+          points: $('#toggle-points').hasClass('active'),
+          productUpdate: $('#toggle-product-update').hasClass('active'),
+          email: $('#toggle-email').hasClass('active')
+        });
+      });
+
+      // 更新密码 - 点击后应实现：
+      // 1. 收集当前密码、新密码、确认密码
+      // 2. 前端校验：新密码长度>=8位、两次输入一致
+      // 3. 调用API修改密码
+      // 4. 成功后清空表单并显示提示
+      $('#btn-save-security').on('click', function() {
+        console.log('更新密码:', {
+          currentPassword: $('#input-current-password').val(),
+          newPassword: $('#input-new-password').val(),
+          confirmPassword: $('#input-confirm-password').val()
+        });
+      });
+
+      // 应用主题 - 点击后应实现：
+      // 1. 获取选中的主题模式（dark/light/system）
+      // 2. 获取选中的强调色
+      // 3. 调用API保存主题偏好
+      // 4. 如果是system模式，监听系统主题变化自动切换
+      // 5. 实时应用主题到页面（更新CSS变量或class）
+      $('#btn-save-theme').on('click', function() {
+        console.log('应用主题:', {
+          theme: $('.theme-card.theme-card-selected').data('theme'),
+          accent: $('.accent-option.ring-primary').data('accent')
+        });
+      });
+
+      // 退出登录设备 - 点击后应实现：
+      // 1. 确认对话框
+      // 2. 调用API使指定设备的会话失效
+      // 3. 从设备列表中移除该设备项
+      $('#btn-logout-device-1').on('click', function() {
+        console.log('退出设备登录');
+        $(this).closest('.flex').fadeOut(200);
+      });
+
+      // 更换头像 - 点击后应实现：
+      // 1. 打开文件选择器（input type="file"）
+      // 2. 限制文件类型为 JPG/PNG，大小不超过 2MB
+      // 3. 上传前预览裁剪
+      // 4. 调用API上传头像图片
+      // 5. 更新头像显示
+      $('#btn-upload-avatar, #user-avatar').on('click', function() {
+        console.log('更换头像');
+      });
+    });
+  </script>
+
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>

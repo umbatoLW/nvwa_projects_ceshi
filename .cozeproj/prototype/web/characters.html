@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start 导航组件，不需要的页面则不要复制此段 -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航（参考Vidu/LibLib） -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary" aria-current="page">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+
+      <!-- 页面标题栏 -->
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-on-surface">角色库</h1>
+          <p class="text-sm text-on-surface-variant mt-1">管理短剧角色，生成三视图与表情包</p>
+        </div>
+        <button id="btn-new-character" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>新建角色
+        </button>
+      </div>
+
+      <!-- 搜索与筛选栏 -->
+      <div class="flex flex-wrap items-center gap-3 mb-6">
+        <div class="relative flex-1 min-w-[240px]">
+          <i data-lucide="search" class="w-4 h-4 text-on-surface-variant absolute left-3 top-1/2 -translate-y-1/2"></i>
+          <input id="search-input" type="text" placeholder="搜索角色名称或描述..."
+                 class="w-full bg-surface-container border-none rounded-md pl-9 pr-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" />
+        </div>
+        <select id="filter-gender" class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors cursor-pointer">
+          <option value="">全部性别</option>
+          <option value="male">男</option>
+          <option value="female">女</option>
+        </select>
+        <select id="filter-age" class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors cursor-pointer">
+          <option value="">全部年龄</option>
+          <option value="young">青年 (18-30)</option>
+          <option value="middle">中年 (30-50)</option>
+          <option value="senior">老年 (50+)</option>
+        </select>
+        <select id="filter-type" class="bg-surface-container border-none rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors cursor-pointer">
+          <option value="">全部类型</option>
+          <option value="protagonist">主角</option>
+          <option value="supporting">配角</option>
+          <option value="villain">反派</option>
+        </select>
+        <div class="flex items-center rounded-md bg-surface-container p-0.5 ml-auto">
+          <button id="view-grid" class="p-1.5 rounded-sm text-primary bg-surface-container-high transition-colors" aria-pressed="true">
+            <i data-lucide="layout-grid" class="w-4 h-4"></i>
+          </button>
+          <button id="view-list" class="p-1.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors" aria-pressed="false">
+            <i data-lucide="list" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 角色卡片网格 -->
+      <div id="character-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+
+        <!-- 列表-角色1：林婉儿 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-001" data-name="林婉儿" data-gender="female" data-age="young" data-type="protagonist">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=533&fit=crop"
+                 alt="年轻女性角色 清秀面容 长发披肩" data-category="人物" class="w-full h-full object-cover" />
+            <!-- 快捷操作遮罩 -->
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">林婉儿</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">主角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">都市甜宠剧女主角，温柔善良的职场新人，拥有治愈系笑容。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">女 · 24岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-01</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色2：顾北辰 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-002" data-name="顾北辰" data-gender="male" data-age="young" data-type="protagonist">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=533&fit=crop"
+                 alt="年轻男性角色 阳光帅气 短发" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">顾北辰</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">主角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">霸道总裁，外表冷峻内心温柔，对女主一往情深。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">男 · 28岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-02</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色3：苏曼丽 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-003" data-name="苏曼丽" data-gender="female" data-age="middle" data-type="villain">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=533&fit=crop"
+                 alt="中年女性角色 精明干练 短发" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">苏曼丽</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error">反派</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">心机深沉的豪门千金，为达目的不择手段，暗中陷害女主。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">女 · 32岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-03</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色4：老张 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-004" data-name="老张" data-gender="male" data-age="senior" data-type="supporting">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=533&fit=crop"
+                 alt="老年男性角色 慈祥面容 花白头发" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">老张</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">配角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">顾家老管家，见证男主成长，关键时刻化解危机。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">男 · 58岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-04</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色5：赵小萌 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-005" data-name="赵小萌" data-gender="female" data-age="young" data-type="supporting">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=533&fit=crop"
+                 alt="年轻女性角色 活泼可爱 齐刘海" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">赵小萌</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">配角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">女主闺蜜，鬼马精灵，助攻男女主感情线。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">女 · 23岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-05</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色6：沈天浩 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-006" data-name="沈天浩" data-gender="male" data-age="middle" data-type="villain">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=533&fit=crop"
+                 alt="中年男性角色 阴郁神情 戴眼镜" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">沈天浩</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error">反派</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">商业对手，城府极深，暗中布局企图吞并顾氏集团。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">男 · 45岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-06</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色7：李小雨 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-007" data-name="李小雨" data-gender="female" data-age="young" data-type="protagonist">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=533&fit=crop"
+                 alt="年轻女性角色 清纯甜美 马尾辫" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">李小雨</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">主角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">穿越剧女主，从古代穿越到现代，引发一系列爆笑故事。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">女 · 20岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-07</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-角色8：周大海 -->
+        <div class="character-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all cursor-pointer"
+             data-id="char-008" data-name="周大海" data-gender="male" data-age="middle" data-type="supporting">
+          <div class="relative aspect-[3/4] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=533&fit=crop"
+                 alt="中年男性角色 憨厚朴实 微胖" data-category="人物" class="w-full h-full object-cover" />
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-edit w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="编辑">
+                <i data-lucide="pencil" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-three-view w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center backdrop-blur-sm transition-colors" title="生成三视图">
+                <i data-lucide="box" class="w-4 h-4 text-white"></i>
+              </button>
+              <button class="btn-delete w-9 h-9 rounded-full bg-white/15 hover:bg-error/60 flex items-center justify-center backdrop-blur-sm transition-colors" title="删除">
+                <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-base font-semibold text-on-surface">周大海</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">配角</span>
+            </div>
+            <p class="text-sm text-on-surface-variant line-clamp-2">搞笑担当，男主的司机兼好友，承包全剧笑点。</p>
+            <div class="flex items-center gap-2 mt-3">
+              <span class="text-xs text-on-surface-variant/60">男 · 35岁</span>
+              <span class="text-xs text-on-surface-variant/40">·</span>
+              <span class="text-xs text-on-surface-variant/60">2026-05-07</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 角色列表视图（默认隐藏） -->
+      <div id="character-list" class="hidden bg-surface-container rounded-xl shadow-card overflow-hidden">
+        <div class="grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 bg-surface-container-high text-xs font-semibold text-on-surface-variant uppercase tracking-wide">
+          <span></span>
+          <span>角色名称</span>
+          <span>类型</span>
+          <span>性别</span>
+          <span>年龄</span>
+          <span>创建时间</span>
+        </div>
+        <div class="divide-y divide-outline-variant/30">
+          <!-- 列表-行1 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-001">
+            <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&fit=crop" alt="年轻女性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">林婉儿</div>
+              <div class="text-xs text-on-surface-variant">温柔善良的职场新人</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary w-fit">主角</span>
+            <span class="text-sm text-on-surface-variant">女</span>
+            <span class="text-sm text-on-surface-variant">24岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-01</span>
+          </div>
+          <!-- 列表-行2 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-002">
+            <img src="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=80&h=80&fit=crop" alt="年轻男性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">顾北辰</div>
+              <div class="text-xs text-on-surface-variant">霸道总裁，外表冷峻</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary w-fit">主角</span>
+            <span class="text-sm text-on-surface-variant">男</span>
+            <span class="text-sm text-on-surface-variant">28岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-02</span>
+          </div>
+          <!-- 列表-行3 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-003">
+            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop" alt="中年女性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">苏曼丽</div>
+              <div class="text-xs text-on-surface-variant">心机深沉的豪门千金</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error w-fit">反派</span>
+            <span class="text-sm text-on-surface-variant">女</span>
+            <span class="text-sm text-on-surface-variant">32岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-03</span>
+          </div>
+          <!-- 列表-行4 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-004">
+            <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop" alt="老年男性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">老张</div>
+              <div class="text-xs text-on-surface-variant">顾家老管家，见证男主成长</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">配角</span>
+            <span class="text-sm text-on-surface-variant">男</span>
+            <span class="text-sm text-on-surface-variant">58岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-04</span>
+          </div>
+          <!-- 列表-行5 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-005">
+            <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=80&h=80&fit=crop" alt="年轻女性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">赵小萌</div>
+              <div class="text-xs text-on-surface-variant">女主闺蜜，鬼马精灵</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">配角</span>
+            <span class="text-sm text-on-surface-variant">女</span>
+            <span class="text-sm text-on-surface-variant">23岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-05</span>
+          </div>
+          <!-- 列表-行6 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-006">
+            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop" alt="中年男性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">沈天浩</div>
+              <div class="text-xs text-on-surface-variant">商业对手，城府极深</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error w-fit">反派</span>
+            <span class="text-sm text-on-surface-variant">男</span>
+            <span class="text-sm text-on-surface-variant">45岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-06</span>
+          </div>
+          <!-- 列表-行7 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-007">
+            <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=80&h=80&fit=crop" alt="年轻女性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">李小雨</div>
+              <div class="text-xs text-on-surface-variant">穿越剧女主，从古代穿越到现代</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary w-fit">主角</span>
+            <span class="text-sm text-on-surface-variant">女</span>
+            <span class="text-sm text-on-surface-variant">20岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-07</span>
+          </div>
+          <!-- 列表-行8 -->
+          <div class="character-list-row grid grid-cols-[60px_1fr_120px_100px_100px_140px] px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer items-center" data-id="char-008">
+            <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop" alt="中年男性角色头像" data-category="人物" class="w-10 h-10 rounded-full object-cover" />
+            <div>
+              <div class="text-sm font-medium text-on-surface">周大海</div>
+              <div class="text-xs text-on-surface-variant">搞笑担当，男主的司机兼好友</div>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">配角</span>
+            <span class="text-sm text-on-surface-variant">男</span>
+            <span class="text-sm text-on-surface-variant">35岁</span>
+            <span class="text-sm text-on-surface-variant">2026-05-07</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 删除确认模态框 -->
+      <div id="modal-delete" class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-surface rounded-xl shadow-dialog max-w-sm w-full p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-full bg-error/15 flex items-center justify-center">
+              <i data-lucide="alert-triangle" class="w-5 h-5 text-error"></i>
+            </div>
+            <h3 class="text-base font-semibold text-on-surface">确认删除</h3>
+          </div>
+          <p class="text-sm text-on-surface-variant mb-6">确定要删除角色「<span id="delete-target-name" class="text-on-surface font-medium"></span>」吗？此操作不可恢复。</p>
+          <div class="flex justify-end gap-3">
+            <button id="btn-cancel-delete" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all">取消</button>
+            <button id="btn-confirm-delete" class="bg-error text-white px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all">删除</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end 导航组件，不需要的页面则不要复制此段 -->
+
+  <script>
+    $(function() {
+      lucide.createIcons();
+
+      let currentView = 'grid';
+      let deleteTargetId = null;
+      let deleteTargetEl = null;
+
+      // 视图切换
+      $('#view-grid').on('click', function() {
+        if (currentView === 'grid') return;
+        currentView = 'grid';
+        $('#view-grid').attr('aria-pressed', 'true').addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#view-list').attr('aria-pressed', 'false').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#character-grid').removeClass('hidden');
+        $('#character-list').addClass('hidden');
+      });
+
+      $('#view-list').on('click', function() {
+        if (currentView === 'list') return;
+        currentView = 'list';
+        $('#view-list').attr('aria-pressed', 'true').addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#view-grid').attr('aria-pressed', 'false').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#character-list').removeClass('hidden');
+        $('#character-grid').addClass('hidden');
+      });
+
+      // 搜索功能
+      $('#search-input').on('input', function() {
+        const keyword = $(this).val().toLowerCase();
+        $('.character-card, .character-list-row').each(function() {
+          const name = $(this).data('name').toLowerCase();
+          const desc = $(this).find('p, .text-xs.text-on-surface-variant').first().text().toLowerCase();
+          if (name.includes(keyword) || desc.includes(keyword)) {
+            $(this).removeClass('hidden');
+          } else {
+            $(this).addClass('hidden');
+          }
+        });
+      });
+
+      // 筛选功能
+      function applyFilters() {
+        const gender = $('#filter-gender').val();
+        const age = $('#filter-age').val();
+        const type = $('#filter-type').val();
+
+        $('.character-card, .character-list-row').each(function() {
+          const $el = $(this);
+          const elGender = $el.data('gender');
+          const elAge = $el.data('age');
+          const elType = $el.data('type');
+
+          let visible = true;
+          if (gender && elGender !== gender) visible = false;
+          if (age && elAge !== age) visible = false;
+          if (type && elType !== type) visible = false;
+
+          if (visible) {
+            $el.removeClass('hidden');
+          } else {
+            $el.addClass('hidden');
+          }
+        });
+      }
+
+      $('#filter-gender, #filter-age, #filter-type').on('change', applyFilters);
+
+      // 卡片点击进入详情页
+      $('#character-grid').on('click', '.character-card', function(e) {
+        if ($(e.target).closest('.btn-edit, .btn-three-view, .btn-delete').length) return;
+        const id = $(this).data('id');
+        window.location.href = `character-detail.html?id=${id}`;
+      });
+
+      $('#character-list').on('click', '.character-list-row', function() {
+        const id = $(this).data('id');
+        window.location.href = `character-detail.html?id=${id}`;
+      });
+
+      // 新建角色按钮
+      $('#btn-new-character').on('click', function() {
+        // 点击后应实现新建角色流程：
+        // 1. 弹出创建角色模态框，包含名称、描述、性别、年龄、类型等表单字段
+        // 2. 用户填写后点击确认，调用AI角色生成接口创建角色
+        // 3. 生成成功后刷新角色列表，新角色置顶显示
+        console.log('新建角色：应弹出创建模态框并调用AI生成接口');
+      });
+
+      // 编辑按钮
+      $('#character-grid').on('click', '.btn-edit', function(e) {
+        e.stopPropagation();
+        const id = $(this).closest('.character-card').data('id');
+        // 编辑按钮 - 点击后应实现：
+        // 1. 弹出编辑角色模态框，预填充当前角色的名称、描述、标签等信息
+        // 2. 用户修改后点击保存，调用更新接口
+        // 3. 保存成功后更新DOM中对应角色的显示内容
+        console.log('编辑角色:', id);
+      });
+
+      // 生成三视图按钮
+      $('#character-grid').on('click', '.btn-three-view', function(e) {
+        e.stopPropagation();
+        const id = $(this).closest('.character-card').data('id');
+        const name = $(this).closest('.character-card').data('name');
+        // 生成三视图 - 点击后应实现：
+        // 1. 显示生成进度模态框，提示正在AI生成正面/侧面/背面三视图
+        // 2. 调用图像生成API，传入角色描述和视角参数
+        // 3. 生成完成后展示三视图预览，支持下载或保存到角色资产
+        console.log('生成三视图:', name, id);
+      });
+
+      // 删除按钮
+      $('#character-grid').on('click', '.btn-delete', function(e) {
+        e.stopPropagation();
+        const $card = $(this).closest('.character-card');
+        deleteTargetId = $card.data('id');
+        deleteTargetEl = $card;
+        const name = $card.data('name');
+        $('#delete-target-name').text(name);
+        $('#modal-delete').removeClass('hidden');
+      });
+
+      // 取消删除
+      $('#btn-cancel-delete').on('click', function() {
+        $('#modal-delete').addClass('hidden');
+        deleteTargetId = null;
+        deleteTargetEl = null;
+      });
+
+      // 确认删除
+      $('#btn-confirm-delete').on('click', function() {
+        if (deleteTargetEl) {
+          deleteTargetEl.remove();
+          // 同时移除列表视图中的对应行
+          $(`.character-list-row[data-id="${deleteTargetId}"]`).remove();
+        }
+        $('#modal-delete').addClass('hidden');
+        deleteTargetId = null;
+        deleteTargetEl = null;
+      });
+
+      // 点击模态框背景关闭
+      $('#modal-delete').on('click', function(e) {
+        if (e.target === this) {
+          $('#modal-delete').addClass('hidden');
+          deleteTargetId = null;
+          deleteTargetEl = null;
+        }
+      });
+    });
+  </script>
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>
