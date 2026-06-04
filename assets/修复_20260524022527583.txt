@@ -1,0 +1,227 @@
+## AI修复指令：剧本上传与集数预览功能问题修复
+
+### 文件范围
+- **修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+---
+
+## 一、问题汇总
+
+### 1.1 上传过程无反馈（严重）
+**问题**：用户上传剧本后，界面没有任何 loading 提示，不知道是否在处理
+
+### 1.2 分析进度未显示（严重）
+**问题**：`analyzeProgress` 状态存在，但在剧本编辑视图中没有显示
+
+### 1.3 集数编辑同步问题（中等）
+**问题**：`handleEpisodeContentChange` 函数存在闭包陷阱，编辑单集内容可能不同步到总剧本
+
+### 1.4 集数分析失败静默处理（中等）
+**问题**：AI 分析失败时静默使用字数估算，用户不知情
+
+---
+
+## 二、修复方案
+
+### 2.1 新增状态
+
+**位置**：状态声明区域（约第 75-80 行附近）
+
+```tsx
+// 上传文件状态
+const [isUploading, setIsUploading] = useState(false);
+const [uploadProgress, setUploadProgress] = useState('');
+```
+
+---
+
+### 2.2 修改 handleFileUpload 函数
+
+**位置**：约第 626 行
+
+**修改后的代码**：
+
+```tsx
+const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  
+  setIsUploading(true);
+  setUploadProgress('正在读取文件...');
+  
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const allowed = ["txt", "md", "docx", "pdf"];
+  if (!allowed.includes(ext)) {
+    toast.error("目前仅支持 .txt / .md / .docx / .pdf 格式文件");
+    e.target.value = "";
+    setIsUploading(false);
+    return;
+  }
+  
+  let text = "";
+  try {
+    if (ext === "txt" || ext === "md") {
+      text = await file.text();
+    } else {
+      setUploadProgress('正在解析文档...');
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiFetch("/api/parse-document", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "文件解析失败");
+      }
+      text = data.content;
+    }
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "文件读取失败");
+    e.target.value = "";
+    setIsUploading(false);
+    return;
+  }
+  
+  setEditContent(text);
+  setUploadProgress('正在分析剧本集数...');
+  
+  // Auto-save uploaded content
+  try {
+    await apiFetch(`/api/scripts/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text }),
+    });
+    
+    // Auto-analyze stats
+    const wordCount = text.replace(/\s/g, "").length;
+    const sceneMatches = text.match(/场景|第[一二三四五六七八九十\d]+场|内景|外景|INT\.?|EXT\.?/gi);
+    const sceneCount = sceneMatches ? new Set(sceneMatches).size : Math.max(1, Math.ceil(text.length / 2000));
+    
+    // 分析集数
+    let episodeCount = 0;
+    let episodeData: EpisodeInfo[] = [];
+    
+    try {
+      const analyzeRes = await apiFetch('/api/ai/analyze-episodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scriptContent: text }),
+      });
+      const analyzeData = await analyzeRes.json();
+      if (analyzeData.success && analyzeData.episodes && analyzeData.episodes.length > 0) {
+        episodeCount = analyzeData.episodes.length;
+        episodeData = analyzeData.episodes;
+        setEpisodes(episodeData);
+        const methodText = analyzeData.method === 'regex' ? '正则识别' : 
+                          analyzeData.method === 'batch_ai' ? `AI分批分析(${analyzeData.batchCount}批)` : 
+                          analyzeData.method === 'estimated' ? '字数估算' : 'AI分析';
+        toast.success(`剧本上传成功，已识别 ${episodeCount} 集 (${methodText})`);
+      } else {
+        throw new Error('分析结果为空');
+      }
+    } catch {
+      // 分析失败时使用字数估算
+      episodeCount = Math.max(1, Math.ceil(wordCount / 15000));
+      toast.warning(`AI分析失败，已按字数估算 ${episodeCount} 集`);
+    }
+    
+    setScript((prev) =>
+      prev
+        ? { ...prev, content: text, wordCount: wordCount, sceneCount: sceneCount, episodeCount: episodeCount }
+        : prev
+    );
+    
+    // 上传成功后自动分片
+    if (episodeCount > 1) {
+      setTimeout(() => {
+        autoSplitContent();
+      }, 100);
+    }
+    
+  } catch (error) {
+    console.error('保存失败:', error);
+    toast.error('剧本保存失败');
+  } finally {
+    setIsUploading(false);
+    setUploadProgress('');
+    e.target.value = "";
+  }
+};
+```
+
+---
+
+### 2.3 修复 handleEpisodeContentChange 闭包问题
+
+**位置**：约第 562 行
+
+**修改后的代码**：
+
+```tsx
+// 单集内容更新
+const handleEpisodeContentChange = (episode: number, content: string) => {
+  setEpisodeContentMap(prev => {
+    const updatedMap = { ...prev, [episode]: content };
+    const allContent = Object.entries(updatedMap)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([, c]) => c)
+      .join('\n\n');
+    // 在 setEpisodeContentMap 的回调中同步更新 editContent
+    setEditContent(allContent);
+    return updatedMap;
+  });
+};
+```
+
+---
+
+### 2.4 在剧本编辑视图添加进度显示
+
+**位置**：`activeView === "script"` 部分（约第 1970 行附近）
+
+**找到这部分代码**：
+```tsx
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-lg font-semibold">剧本编辑</h2>
+```
+
+**在其后添加进度显示**：
+
+```tsx
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 上传/分析进度显示 */}
+    {(isUploading || uploadProgress || analyzeProgress) && (
+      <div className="mb-4 p-3 bg-[#0ABAB5]/10 border border-[#0ABAB5]/30 rounded-lg flex items-center gap-2">
+        <Loader2 className="w-4 h-4 animate-spin text-[#0ABAB5]" />
+        <span className="text-sm text-[#0ABAB5]">{uploadProgress || analyzeProgress || '处理中...'}</span>
+      </div>
+    )}
+    
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-lg font-semibold">剧本编辑</h2>
+```
+
+---
+
+## 三、测试清单
+
+- [ ] 上传 .txt 文件有进度反馈
+- [ ] 上传 .docx/.pdf 文件有进度反馈
+- [ ] 集数分析中显示"正在分析剧本集数..."
+- [ ] 分析成功后显示 toast 提示（如"已识别 20 集"）
+- [ ] 分析失败时显示 toast warning（如"AI分析失败，已按字数估算"）
+- [ ] 集数 > 1 时自动分片显示在标签栏
+- [ ] 点击标签切换集数正常
+- [ ] 编辑单集内容后总剧本内容同步更新
+
+---
+
+## 四、代码保护规则
+
+1. **不修改** `autoSplitContent` 函数逻辑
+2. **不修改** `getOrAnalyzeEpisodes` 函数逻辑
+3. **保留** 所有 `toast` 提示和错误处理
+4. **保留** 文件类型校验逻辑
+5. **保留** 移动端适配相关代码

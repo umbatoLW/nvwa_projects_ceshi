@@ -1,0 +1,618 @@
+## 高级对话式剧本创作界面 - 可行性分析与AI指令
+
+---
+
+### 一、可行性分析
+
+| 维度 | 评估 | 说明 |
+|------|------|------|
+| **技术可行性** | ✅ 高 | 项目已有 `ai-client.ts` 多模型注册表，流式输出已实现 |
+| **模型支持** | ✅ 高 | 已支持 qwen-plus、deepseek-v3、kimi 等主流模型 |
+| **用户体验** | ✅ 高 | 对话式创作更自然、更灵活，适合创意发散 |
+| **开发成本** | 🟡 中 | 需要新增对话组件和消息管理逻辑 |
+
+---
+
+### 二、功能设计
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  模型选择： [qwen-plus ▼] [豆包] [deepseek] [kimi]      │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  🤖 AI                        用户                       │
+│  ─────────────────────────────────────────────────     │
+│  欢迎使用剧本创作助手！请告诉我你的创意...                │
+│                                                         │
+│                    [用户输入：我想写一个都市爱情故事]    │
+│                                                         │
+│  🤖 AI                                                 │
+│  ─────────────────────────────────────────────────     │
+│  好的！这是一个很有趣的方向。能告诉我更多细节吗？         │
+│  • 主角的性格设定？                                     │
+│  • 故事的主要冲突？                                     │
+│  • 想要的结局是喜剧还是悲剧？                           │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│  [输入剧本创意或大纲...]              [发送] [ ↵ ]      │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 三、AI修复指令：对话式剧本创作界面
+
+---
+
+## AI修复指令：新增对话式剧本创作模块
+
+### 文件范围
+- **新增文件**：
+  - `/src/components/script-chat/ScriptChatPanel.tsx`（对话主面板）
+  - `/src/components/script-chat/ChatMessage.tsx`（单条消息）
+  - `/src/components/script-chat/ModelSelector.tsx`（模型选择器）
+  - `/src/hooks/useChatSession.ts`（对话会话管理）
+- **修改文件**：
+  - `/src/app/scripts/[id]/page.tsx`（集成对话面板）
+
+---
+
+### 3.1 新增：useChatSession Hook
+
+**文件**：`/src/hooks/useChatSession.ts`
+
+```typescript
+"use client";
+
+import { useState, useCallback, useRef } from "react";
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: number;
+  model?: string;
+}
+
+export interface ChatSession {
+  id: string;
+  messages: ChatMessage[];
+  model: string;
+  createdAt: number;
+}
+
+const SYSTEM_PROMPT = `你是一位专业的短剧剧本创作助手。你将帮助用户：
+1. 从一句话创意扩展为完整剧本大纲
+2. 完善人物设定和人物关系
+3. 设计每集的核心剧情和冲突
+4. 优化对白和场景描写
+5. 提供专业的剧本创作建议
+
+请用专业、友好的风格与用户交流，在适当时候主动提问以获取更多信息。`;
+
+export function useChatSession(scriptId: string) {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: "system",
+      role: "assistant",
+      content: "欢迎使用剧本创作助手！请告诉我你的创意，比如：\n• 我想写一个关于职场逆袭的故事\n• 一个穿越到古代的甜宠剧\n• 围绕家庭矛盾的都市情感剧\n\n请描述你的基本想法，我会帮你逐步完善！",
+      timestamp: Date.now(),
+    },
+  ]);
+  const [currentModel, setCurrentModel] = useState("qwen-plus");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const sendMessage = useCallback(async (content: string) => {
+    if (!content.trim() || isStreaming) return;
+
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content,
+      timestamp: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setIsStreaming(true);
+
+    const assistantMessageId = `assistant-${Date.now()}`;
+    let fullContent = "";
+
+    // 添加空的助手消息
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+        model: currentModel,
+      },
+    ]);
+
+    try {
+      abortRef.current = new AbortController();
+      
+      // 构建对话历史
+      const conversationHistory = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: currentModel,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...conversationHistory,
+            { role: "user", content },
+          ],
+          stream: true,
+        }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!res.ok) throw new Error("请求失败");
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("无法读取响应");
+
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "text" && data.content) {
+                fullContent += data.content;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMessageId
+                      ? { ...m, content: fullContent }
+                      : m
+                  )
+                );
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? { ...m, content: "抱歉，发生了错误，请重试。" }
+              : m
+          )
+        );
+      }
+    } finally {
+      setIsStreaming(false);
+    }
+  }, [messages, currentModel, isStreaming]);
+
+  const abort = useCallback(() => {
+    abortRef.current?.abort();
+    setIsStreaming(false);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setMessages([
+      {
+        id: "system",
+        role: "assistant",
+        content: "对话已清空。请告诉我你的剧本创意！",
+        timestamp: Date.now(),
+      },
+    ]);
+  }, []);
+
+  return {
+    messages,
+    currentModel,
+    setCurrentModel,
+    isStreaming,
+    sendMessage,
+    abort,
+    clearHistory,
+  };
+}
+```
+
+---
+
+### 3.2 新增：对话主面板组件
+
+**文件**：`/src/components/script-chat/ScriptChatPanel.tsx`
+
+```typescript
+"use client";
+
+import React, { useRef, useEffect, useState } from "react";
+import { useChatSession, ChatMessage } from "@/hooks/useChatSession";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Loader2, Send, Trash2, Sparkles } from "lucide-react";
+
+interface ScriptChatPanelProps {
+  scriptId: string;
+  onApplyToScript?: (content: string) => void;
+}
+
+const AVAILABLE_MODELS = [
+  { value: "qwen-plus", label: "通义千问 Plus" },
+  { value: "qwen-turbo", label: "通义千问 Turbo" },
+  { value: "deepseek-v3", label: "DeepSeek V3" },
+  { value: "deepseek-r1", label: "DeepSeek R1" },
+  { value: "kimi-k2.5", label: "Kimi K2.5" },
+];
+
+export function ScriptChatPanel({ scriptId, onApplyToScript }: ScriptChatPanelProps) {
+  const {
+    messages,
+    currentModel,
+    setCurrentModel,
+    isStreaming,
+    sendMessage,
+    abort,
+    clearHistory,
+  } = useChatSession(scriptId);
+
+  const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSend = () => {
+    if (input.trim() && !isStreaming) {
+      sendMessage(input);
+      setInput("");
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-[#0A0A0A]">
+      {/* 顶部栏 */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#333] bg-[#141414]">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-[#0ABAB5]" />
+          <h2 className="font-semibold">剧本创作助手</h2>
+        </div>
+        
+        <div className="flex items-center gap-3">
+          {/* 模型选择器 */}
+          <Select value={currentModel} onValueChange={setCurrentModel}>
+            <SelectTrigger className="w-[160px] bg-[#1A1A1A] border-[#333]">
+              <SelectValue placeholder="选择模型" />
+            </SelectTrigger>
+            <SelectContent>
+              {AVAILABLE_MODELS.map((model) => (
+                <SelectItem key={model.value} value={model.value}>
+                  {model.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          {/* 清空对话 */}
+          <Button 
+            variant="ghost" 
+            size="sm"
+            onClick={clearHistory}
+            className="text-[#888888] hover:text-[#F5F5F5]"
+          >
+            <Trash2 className="w-4 h-4 mr-1" />
+            清空
+          </Button>
+        </div>
+      </div>
+
+      {/* 消息列表 */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((message) => (
+          <ChatMessageItem 
+            key={message.id} 
+            message={message} 
+            onApply={onApplyToScript}
+          />
+        ))}
+        {isStreaming && (
+          <div className="flex items-start gap-2">
+            <div className="w-8 h-8 rounded-full bg-[#0ABAB5]/20 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-[#0ABAB5]" />
+            </div>
+            <div className="bg-[#1A1A1A] rounded-xl px-4 py-3 border border-[#333]">
+              <Loader2 className="w-4 h-4 animate-spin text-[#0ABAB5]" />
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* 输入区 */}
+      <div className="p-4 border-t border-[#333] bg-[#141414]">
+        <div className="flex gap-2">
+          <Textarea
+            ref={textareaRef}
+            className="flex-1 bg-[#1A1A1A] border-[#333] resize-none min-h-[60px] max-h-[120px]"
+            placeholder="输入你的剧本创意或问题..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isStreaming}
+          />
+          <div className="flex flex-col gap-2">
+            {isStreaming ? (
+              <Button 
+                onClick={abort}
+                variant="outline"
+                className="border-[#333] text-[#888888]"
+              >
+                停止
+              </Button>
+            ) : (
+              <Button 
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="bg-[#0ABAB5] hover:bg-[#0ABAB5]/90"
+              >
+                <Send className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-[#888888] mt-2">
+          按 Enter 发送，Shift + Enter 换行
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// 单条消息组件
+function ChatMessageItem({ 
+  message, 
+  onApply 
+}: { 
+  message: ChatMessage; 
+  onApply?: (content: string) => void;
+}) {
+  const isUser = message.role === "user";
+  
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div 
+        className={`max-w-[80%] rounded-xl px-4 py-3 ${
+          isUser 
+            ? "bg-[#0ABAB5] text-black" 
+            : "bg-[#1A1A1A] border border-[#333]"
+        }`}
+      >
+        {!isUser && (
+          <div className="flex items-center gap-2 mb-2 text-xs text-[#888888]">
+            <Sparkles className="w-3 h-3" />
+            <span>{message.model || "AI"}</span>
+          </div>
+        )}
+        <div className="text-sm whitespace-pre-wrap whitespace-pre-wrap">
+          {message.content}
+        </div>
+        {!isUser && message.content && (
+          <div className="flex justify-end mt-2">
+            <Button 
+              size="sm" 
+              variant="ghost"
+              className="text-xs text-[#0ABAB5] hover:text-[#0ABAB5]/80"
+              onClick={() => onApply?.(message.content)}
+            >
+              应用到剧本
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 3.3 新增：后端对话 API
+
+**文件**：`/src/app/api/ai/chat/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { getAIClient, LLMMessage } from "@/lib/ai-client";
+
+export async function POST(request: NextRequest) {
+  try {
+    const { model, messages, stream = true } = await request.json();
+
+    if (!messages || !Array.isArray(messages)) {
+      return NextResponse.json(
+        { error: "Messages are required" },
+        { status: 400 }
+      );
+    }
+
+    const client = getAIClient();
+    
+    // 转换为 LLMMessage 格式
+    const llmMessages: LLMMessage[] = messages.map((m: { role: string; content: string }) => ({
+      role: m.role as "system" | "user" | "assistant",
+      content: m.content,
+    }));
+
+    if (!stream) {
+      // 非流式响应
+      const response = await client.chat.completions.create({
+        model: model || "qwen-plus",
+        messages: llmMessages,
+        temperature: 0.7,
+      });
+      
+      return NextResponse.json({
+        content: response.choices[0]?.message?.content || "",
+      });
+    }
+
+    // 流式响应
+    const streamResponse = await client.chat.completions.create({
+      model: model || "qwen-plus",
+      messages: llmMessages,
+      temperature: 0.7,
+      stream: true,
+    });
+
+    const encoder = new TextEncoder();
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of streamResponse) {
+            const content = chunk.choices[0]?.delta?.content;
+            if (content) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: "text", content })}\n\n`)
+              );
+            }
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+    });
+
+    return new Response(readableStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (error) {
+    console.error("Chat error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Chat failed" },
+      { status: 500 }
+    );
+  }
+}
+```
+
+---
+
+### 3.4 集成到剧本详情页
+
+**文件**：`/src/app/scripts/[id]/page.tsx`
+
+**新增状态**：
+```tsx
+const [activeView, setActiveView] = useState<"script" | "storyboard" | "roles" | "chat">("chat");
+```
+
+**新增导入**：
+```tsx
+import { ScriptChatPanel } from "@/components/script-chat/ScriptChatPanel";
+```
+
+**新增切换按钮**（在视图切换栏添加）：
+```tsx
+{/* 视图切换 */}
+<div className="flex items-center gap-1 p-1 bg-[#141414] rounded-lg">
+  <button
+    onClick={() => setActiveView("chat")}
+    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+      activeView === "chat"
+        ? "bg-[#0ABAB5] text-black"
+        : "text-[#888888] hover:text-[#F5F5F5]"
+    }`}
+  >
+    对话
+  </button>
+  <button
+    onClick={() => setActiveView("script")}
+    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+      activeView === "script"
+        ? "bg-[#0ABAB5] text-black"
+        : "text-[#888888] hover:text-[#F5F5F5]"
+    }`}
+  >
+    剧本
+  </button>
+  {/* ... 其他视图按钮 ... */}
+</div>
+```
+
+**添加对话面板视图**：
+```tsx
+{activeView === "chat" && (
+  <ScriptChatPanel 
+    scriptId={id}
+    onApplyToScript={(content) => {
+      setEditContent(content);
+      setActiveView("script");
+      toast.success("已应用到剧本");
+    }}
+  />
+)}
+```
+
+---
+
+## 测试清单
+
+- [ ] 模型选择器正常切换不同模型
+- [ ] 发送消息后 AI 正确回复
+- [ ] 流式输出实时显示
+- [ ] 停止按钮可以中断生成
+- [ ] 清空对话功能正常
+- [ ] 点击"应用到剧本"内容同步到编辑区
+- [ ] 对话历史正确显示
+- [ ] 切换视图正常
+
+---
+
+## 与现有功能的关系
+
+| 现有功能 | 处理方式 |
+|---------|---------|
+| 剧本编辑 | 保留，用户可将对话内容应用到剧本 |
+| AI优化 | 保留，对话生成的内容可通过"应用到剧本"后再优化 |
+| 分镜生成 | 保留，需先有剧本内容 |
+| 角色/服装等提取 | 保留，这些是分析功能 |
+
+**核心变化**：对话式创作作为"创意阶段"，剧本编辑作为"细化阶段"，各司其职。

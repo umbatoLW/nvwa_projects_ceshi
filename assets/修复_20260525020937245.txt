@@ -1,0 +1,1562 @@
+
+
+# 🚨 第九轮检测（流式系统 + 上传安全 + 移动端） - 详细修复指令
+
+## 📊 检测结果
+
+### 一、流式输出断流问题
+
+| 问题 | 风险等级 | 影响 |
+|------|---------|------|
+| **AbortController未传递到所有AI接口** | 🟠 高 | 用户关闭页面AI继续运行 |
+| **缺少心跳检测** | 🟠 高 | 无法感知连接断开 |
+| **SSE关闭后未清理资源** | 🟠 高 | 内存泄漏 |
+| **缺少连接超时** | 🟡 中 | 空连接占用资源 |
+| **流式任务状态未追踪** | 🟡 中 | 无法知道任务是否完成 |
+
+#### 1.1 问题代码分析
+
+**危险文件：**
+- `/src/hooks/useAIStream.ts` - AbortController已实现，但部分接口未传递signal
+- `/src/app/api/ai/extract-stream/route.ts` - 未接收AbortController
+- `/src/app/api/ai/optimize-stream/route.ts` - 未接收AbortController
+- `/src/app/api/ai/generate-full-script/route.ts` - 需检查signal处理
+
+---
+
+## 🛠️ 修复方案
+
+### 第一阶段：增强AbortController传递
+
+#### 1.1 统一流式响应包装器
+
+**创建文件：** `/src/lib/stream/stream-utils.ts`
+
+```typescript
+/**
+ * 流式响应工具
+ * 统一管理SSE连接的生命周期
+ */
+
+import { logger } from "@/lib/logger";
+
+export interface StreamOptions {
+  /** 请求超时（毫秒） */
+  timeout?: number;
+  /** 心跳间隔（毫秒） */
+  heartbeatInterval?: number;
+  /** 是否启用调试日志 */
+  debug?: boolean;
+}
+
+/**
+ * 创建带完整生命周期管理的流式响应
+ */
+export function createManagedStream(
+  handler: (controller: ReadableStreamDefaultController, signal: AbortSignal) => Promise<void>,
+  options: StreamOptions = {}
+): Response {
+  const {
+    timeout = 300000, // 5分钟默认超时
+    heartbeatInterval = 30000, // 30秒心跳
+    debug = false,
+  } = options;
+
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  let aborted = false;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const abortController = new AbortController();
+      const { signal } = abortController;
+
+      // 设置请求超时
+      timeoutTimer = setTimeout(() => {
+        if (!aborted) {
+          aborted = true;
+          controller.close();
+          abortController.abort();
+          logger.warn("[Stream] Request timeout");
+        }
+      }, timeout);
+
+      // 设置心跳
+      heartbeatTimer = setInterval(() => {
+        try {
+          if (!aborted) {
+            controller.enqueue(`: heartbeat ${Date.now()}\n\n`);
+          }
+        } catch {
+          // 连接已关闭
+          cleanup();
+        }
+      }, heartbeatInterval);
+
+      // 监听 abort 信号
+      signal.addEventListener("abort", () => {
+        if (!aborted) {
+          aborted = true;
+          cleanup();
+          try {
+            controller.close();
+          } catch {
+            // 可能已经关闭
+          }
+        }
+      });
+
+      try {
+        await handler(controller, signal);
+        
+        if (!aborted) {
+          aborted = true;
+          cleanup();
+        }
+      } catch (error) {
+        if (!aborted) {
+          logger.error("[Stream] Handler error:", error);
+          try {
+            controller.error(error);
+          } catch {
+            // 可能已经关闭
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    },
+
+    cancel() {
+      aborted = true;
+      cleanup();
+    },
+  });
+
+  function cleanup() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = null;
+    }
+  }
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no", // 禁用 nginx buffering
+    },
+  });
+}
+
+/**
+ * 发送SSE数据
+ */
+export function encodeSSE(
+  data: Record<string, unknown>,
+  id?: number
+): Uint8Array {
+  const encoder = new TextEncoder();
+  let message = "";
+  
+  if (id !== undefined) {
+    message += `id: ${id}\n`;
+  }
+  
+  message += `data: ${JSON.stringify(data)}\n\n`;
+  
+  return encoder.encode(message);
+}
+
+/**
+ * 发送SSE注释（用于心跳）
+ */
+export function encodeSSEComment(comment: string): Uint8Array {
+  const encoder = new TextEncoder();
+  return encoder.encode(`: ${comment}\n\n`);
+}
+```
+
+#### 1.2 增强 extract-stream 路由
+
+**修改文件：** `/src/app/api/ai/extract-stream/route.ts`
+
+```typescript
+import { NextRequest } from "next/server";
+import { chatCompletion, LLMMessage } from "@/lib/ai-client";
+import { createManagedStream, encodeSSE } from "@/lib/stream/stream-utils";
+import { logger } from "@/lib/logger";
+
+// 流式提取服装/场景/道具数据
+export async function POST(request: NextRequest) {
+  try {
+    const { searchParams } = request.nextUrl;
+    const signal = request.signal; // 获取AbortController信号
+
+    const { type, scriptContent, episode } = await request.json();
+
+    if (!type || !scriptContent) {
+      return new Response(JSON.stringify({ error: "Missing required fields" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 定义提示词
+    const prompts: Record<string, string> = {
+      costume: `你是一位影视服装设计师。请从剧本中提取角色服装信息。严格按照以下JSON数组格式输出...`,
+      scene: `你是一位影视美术指导。请从剧本中提取场景信息。严格按照以下JSON数组格式输出...`,
+      prop: `你是一位影视道具师。请从剧本中提取道具信息。严格按照以下JSON数组格式输出...`,
+    };
+
+    const systemPrompt = prompts[type];
+    if (!systemPrompt) {
+      return new Response(JSON.stringify({ error: "Invalid type" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const episodeText = episode ? `第${episode}集` : "";
+    const userContent = `请从以下${episodeText}剧本内容中提取${type === "costume" ? "服装" : type === "scene" ? "场景" : "道具"}信息：\n\n${scriptContent.substring(0, 8000)}`;
+
+    const messages: LLMMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ];
+
+    // 使用带管理的流式响应
+    return createManagedStream(async (controller, streamSignal) => {
+      try {
+        const completion = await chatCompletion(messages, {
+          model: "qwen-plus",
+          temperature: 0.3,
+          max_tokens: 4096,
+          stream: true,
+        }, streamSignal) as AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>;
+
+        let fullContent = "";
+
+        for await (const chunk of completion) {
+          // 检查是否已中止
+          if (streamSignal.aborted) {
+            logger.info("[ExtractStream] Request aborted by client");
+            break;
+          }
+
+          const content = chunk.choices?.[0]?.delta?.content || "";
+          if (content) {
+            fullContent += content;
+            // 发送增量数据
+            controller.enqueue(encodeSSE({ type: "delta", content }));
+          }
+        }
+
+        // 尝试解析最终结果
+        try {
+          const jsonMatch = fullContent.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const items = JSON.parse(jsonMatch[0]);
+            controller.enqueue(encodeSSE({ type: "complete", items }));
+          } else {
+            controller.enqueue(encodeSSE({ type: "error", error: "无法解析结果" }));
+          }
+        } catch {
+          controller.enqueue(encodeSSE({ type: "error", error: "解析失败" }));
+        }
+      } catch (err) {
+        logger.error("[ExtractStream] Stream error:", err);
+        if (!streamSignal.aborted) {
+          controller.enqueue(encodeSSE({ type: "error", error: String(err) }));
+        }
+      }
+    }, {
+      timeout: 180000, // 3分钟超时
+      debug: process.env.NODE_ENV === "development",
+    });
+
+  } catch (error) {
+    return new Response(JSON.stringify({ error: String(error) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+```
+
+#### 1.3 增强 optimize-stream 路由
+
+**修改文件：** `/src/app/api/ai/optimize-stream/route.ts`
+
+```typescript
+import { NextRequest } from 'next/server';
+import { getAIClient, createStreamResponse } from '@/lib/ai-client';
+import { createManagedStream, encodeSSE } from '@/lib/stream/stream-utils';
+import { logger } from '@/lib/logger';
+
+// 优化模式的提示词模板
+const OPTIMIZE_PROMPTS: Record<string, { name: string; system: string }> = {
+  polish: {
+    name: '整体润色',
+    system: `你是一位专业的剧本优化专家...`,
+  },
+  character: {
+    name: '人物增强',
+    system: `你是一位专业的剧本人物塑造专家...`,
+  },
+  visual: {
+    name: '画面感强化',
+    system: `你是一位专业的影视剧本专家...`,
+  },
+  rhythm: {
+    name: '节奏调整',
+    system: `你是一位专业的剧本节奏控制专家...`,
+  },
+};
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { content, mode = 'polish' } = body;
+    const signal = request.signal; // 获取AbortController信号
+
+    if (!content || typeof content !== 'string') {
+      return new Response(
+        JSON.stringify({ type: 'error', message: '缺少剧本内容' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const modeConfig = OPTIMIZE_PROMPTS[mode] || OPTIMIZE_PROMPTS.polish;
+    const openai = getAIClient();
+
+    // 使用带AbortController的流式响应
+    return createManagedStream(async (controller, streamSignal) => {
+      try {
+        const stream = await openai.chat.completions.create({
+          model: 'qwen-plus',
+          messages: [
+            { role: 'system', content: modeConfig.system },
+            { role: 'user', content: `请优化以下剧本内容：\n\n${content}` }
+          ],
+          temperature: 0.7,
+          max_tokens: 8000,
+          stream: true,
+          signal: streamSignal, // 传递abort信号
+        });
+
+        for await (const chunk of stream) {
+          if (streamSignal.aborted) {
+            logger.info("[OptimizeStream] Request aborted by client");
+            break;
+          }
+
+          const text = chunk.choices[0]?.delta?.content || '';
+          if (text) {
+            controller.enqueue(encodeSSE({ type: 'text', content: text }));
+          }
+        }
+
+        controller.enqueue(encodeSSE({ type: 'complete' }));
+      } catch (error) {
+        logger.error("[OptimizeStream] Stream error:", error);
+        if (!streamSignal.aborted) {
+          controller.enqueue(encodeSSE({ type: 'error', message: error instanceof Error ? error.message : '优化过程发生错误' }));
+        }
+      }
+    }, {
+      timeout: 300000, // 5分钟超时
+      debug: process.env.NODE_ENV === "development",
+    });
+
+  } catch (error) {
+    console.error('Optimize stream error:', error);
+    return new Response(
+      JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : '优化过程发生错误' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+```
+
+#### 1.4 增强 useAIStream Hook
+
+**修改文件：** `/src/hooks/useAIStream.ts`
+
+```typescript
+"use client";
+
+import { useCallback, useRef, useMemo, useEffect } from "react";
+import { useAIStreamStore, initialStreamState } from "@/stores/ai-stream-store";
+import type { AIStreamState } from "@/stores/ai-stream-store";
+
+export type { AIStreamState };
+
+/**
+ * AI流式请求Hook
+ * 使用zustand进行全局状态管理，支持批量更新优化性能
+ * @param streamId 可选的流ID，用于区分多个并发流
+ */
+export function useAIStream(streamId?: string) {
+  const id = useMemo(() => streamId || `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`, [streamId]);
+  const streamState = useAIStreamStore((state) => state.streams[id] || initialStreamState);
+  const setStream = useAIStreamStore((state) => state.setStream);
+  const removeStream = useAIStreamStore((state) => state.removeStream);
+  
+  const abortRef = useRef<AbortController | null>(null);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingUpdateRef = useRef<Partial<AIStreamState>>({});
+
+  // 组件卸载时自动清理
+  useEffect(() => {
+    return () => {
+      // 清理abort
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+      // 清理定时器
+      if (batchTimerRef.current) {
+        clearTimeout(batchTimerRef.current);
+      }
+      // 移除流状态
+      removeStream(id);
+    };
+  }, [id, removeStream]);
+
+  // 批量更新函数，合并高频更新，约60fps
+  const batchUpdate = useCallback((updates: Partial<AIStreamState>) => {
+    pendingUpdateRef.current = { ...pendingUpdateRef.current, ...updates };
+    
+    if (batchTimerRef.current) {
+      clearTimeout(batchTimerRef.current);
+    }
+    
+    batchTimerRef.current = setTimeout(() => {
+      setStream(id, pendingUpdateRef.current);
+      pendingUpdateRef.current = {};
+    }, 16);
+  }, [id, setStream]);
+
+  const run = useCallback(
+    async (url: string, body?: Record<string, unknown>): Promise<unknown> => {
+      batchUpdate({ ...initialStreamState, isRunning: true });
+      
+      // 创建新的AbortController
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      // 设置请求超时（5分钟）
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 5 * 60 * 1000);
+
+      try {
+        let token = "";
+        if (typeof window !== "undefined") {
+          const session = localStorage.getItem("nvwa_session");
+          if (session) {
+            try {
+              const parsed = JSON.parse(session);
+              token = parsed?.access_token || "";
+            } catch (err) {
+              console.error("解析session失败:", err);
+            }
+          }
+        }
+        
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ ...body, _stream: true }),
+          signal: controller.signal, // 传递abort信号
+        });
+
+        // 清除超时
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
+        if (!response.body) {
+          throw new Error("Response body is null");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: unknown = null;
+        let accumulatedText = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (!jsonStr) continue;
+            
+            try {
+              const data = JSON.parse(jsonStr);
+              
+              const hasType = data.type !== undefined;
+              const hasContent = data.content !== undefined;
+              
+              if (hasContent && (!hasType || data.type === "text" || data.type === "delta")) {
+                accumulatedText += data.content || "";
+                batchUpdate({ message: data.content || streamState.message });
+                continue;
+              }
+              
+              if (data.type === "progress") {
+                batchUpdate({
+                  progress: data.progress ?? streamState.progress,
+                  stage: data.stage ?? streamState.stage,
+                  message: data.message ?? streamState.message,
+                });
+              } else if (data.type === "complete") {
+                finalResult = data.data ?? (accumulatedText ? { content: accumulatedText } : data);
+                batchUpdate({
+                  isRunning: false,
+                  progress: 100,
+                  stage: "complete",
+                  message: data.message ?? "完成",
+                });
+              } else if (data.type === "error") {
+                throw new Error(data.message ?? "未知错误");
+              }
+            } catch (parseError) {
+              if (parseError instanceof SyntaxError) {
+                // ignore malformed lines
+              } else {
+                throw parseError;
+              }
+            }
+          }
+        }
+
+        if (finalResult === null && accumulatedText) {
+          finalResult = { content: accumulatedText };
+        }
+        
+        if (finalResult === null) {
+          throw new Error("未收到完整结果");
+        }
+        
+        return finalResult;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "请求失败";
+        batchUpdate({ isRunning: false, error: msg });
+        throw err;
+      } finally {
+        // 清理
+        clearTimeout(timeoutId);
+        
+        if (batchTimerRef.current) {
+          clearTimeout(batchTimerRef.current);
+          batchTimerRef.current = null;
+        }
+        
+        // 确保最后的更新被应用
+        if (Object.keys(pendingUpdateRef.current).length > 0) {
+          setStream(id, pendingUpdateRef.current);
+          pendingUpdateRef.current = {};
+        }
+        
+        // 清理 abort ref
+        abortRef.current = null;
+      }
+    },
+    [id, streamState.message, streamState.progress, streamState.stage, batchUpdate, setStream]
+  );
+
+  const abort = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    batchUpdate({ isRunning: false, error: "已取消" });
+  }, [batchUpdate]);
+
+  const reset = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setStream(id, initialStreamState);
+  }, [id, setStream]);
+
+  const cleanup = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    removeStream(id);
+  }, [id, removeStream]);
+
+  return {
+    ...streamState,
+    run,
+    abort,
+    reset,
+    cleanup,
+    streamId: id,
+  };
+}
+```
+
+---
+
+### 第二阶段：增强上传安全
+
+#### 2.1 上传安全增强
+
+**修改文件：** `/src/app/api/upload-image/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { S3Storage } from "coze-coding-dev-sdk";
+import { auditLogger } from "@/lib/security/audit-logger";
+import { createHash } from "crypto";
+
+// 安全配置
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif"];
+const MAX_FILE_NAME_LENGTH = 100;
+const DANGEROUS_PATTERNS = [
+  /\.php/i,
+  /\.js/i,
+  /\.html/i,
+  /\.css/i,
+  /\.exe/i,
+  /<&script>/i,
+  /javascript:/i,
+  /on\w+=/i, // onclick, onerror等
+  /data:/i,   // data:url
+  /vbscript:/i,
+];
+
+// SVG危险元素黑名单
+const SVG_DANGEROUS_ELEMENTS = [
+  'script',
+  'foreignObject', 
+  'iframe',
+  'object',
+  'embed',
+  'link',
+  'style',
+  'use',
+];
+
+const SVG_DANGEROUS_ATTRS = [
+  'onload',
+  'onerror', 
+  'onclick',
+  'onmouseover',
+  'xlink:href', // 可能导致XSS
+  'data:',      // data:url
+];
+
+/**
+ * 图片上传API - 用于图片编辑功能
+ * 接收前端上传的图片，存储到OSS并返回可访问的URL
+ */
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  let success = false;
+  let userId: string | undefined;
+
+  try {
+    // 1. 获取用户身份（临时使用dev-user，实际应从认证获取）
+    userId = 'dev-user';
+
+    // 2. Content-Type 验证
+    const contentType = request.headers.get("content-type") || "";
+    if (!contentType.includes("multipart/form-data")) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'Invalid Content-Type',
+        metadata: { contentType },
+      });
+      return NextResponse.json(
+        { success: false, error: "请求格式错误，需要 multipart/form-data" },
+        { status: 400 }
+      );
+    }
+
+    // 3. 解析表单
+    const formData = await request.formData();
+    const file = formData.get("file") as File | null;
+
+    if (!file) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'No file',
+      });
+      return NextResponse.json(
+        { success: false, error: "未找到上传文件" },
+        { status: 400 }
+      );
+    }
+
+    // 4. 文件名安全检查
+    const fileName = file.name || 'unnamed';
+    if (fileName.length > MAX_FILE_NAME_LENGTH) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'File name too long',
+        metadata: { fileName, length: fileName.length },
+      });
+      return NextResponse.json(
+        { success: false, error: "文件名过长" },
+        { status: 400 }
+      );
+    }
+
+    // 5. 危险模式检查
+    for (const pattern of DANGEROUS_PATTERNS) {
+      if (pattern.test(fileName)) {
+        auditLogger.log('upload-image', {
+          userId, request, success: false, error: 'Suspicious file name',
+          metadata: { fileName },
+        });
+        return NextResponse.json(
+          { success: false, error: "文件名包含不安全字符" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 6. 验证文件扩展名
+    const ext = fileName.split(".").pop()?.toLowerCase() || "";
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'Invalid file extension',
+        metadata: { ext },
+      });
+      return NextResponse.json(
+        { success: false, error: "不支持的文件类型" },
+        { status: 400 }
+      );
+    }
+
+    // 7. 验证Content-Type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'Invalid MIME type',
+        metadata: { mimeType: file.type },
+      });
+      return NextResponse.json(
+        { success: false, error: "不支持的文件类型" },
+        { status: 400 }
+      );
+    }
+
+    // 8. 验证文件大小
+    if (file.size > MAX_FILE_SIZE) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'File too large',
+        metadata: { size: file.size },
+      });
+      return NextResponse.json(
+        { success: false, error: "文件大小不能超过 10MB" },
+        { status: 400 }
+      );
+    }
+
+    // 9. 读取文件内容
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // 10. 基本文件头验证（检查文件魔数）
+    const fileHeader = buffer.slice(0, 12);
+    const isValidImage = validateImageHeader(fileHeader, ext);
+    if (!isValidImage) {
+      auditLogger.log('upload-image', {
+        userId, request, success: false, error: 'File content mismatch',
+        metadata: { declaredType: file.type, ext },
+      });
+      return NextResponse.json(
+        { success: false, error: "文件内容与声明类型不匹配" },
+        { status: 400 }
+      );
+    }
+
+    // 11. SVG安全检查（防止SVG XSS）
+    if (ext === 'svg' || file.type === 'image/svg+xml') {
+      const svgCheck = validateSVG(buffer);
+      if (!svgCheck.valid) {
+        auditLogger.log('upload-image', {
+          userId, request, success: false, error: 'SVG contains dangerous content',
+          metadata: { reason: svgCheck.reason },
+        });
+        return NextResponse.json(
+          { success: false, error: `SVG文件包含不安全内容: ${svgCheck.reason}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 12. 压缩炸弹检测（检查压缩比率）
+    if (isCompressedImage(ext)) {
+      const bombCheck = detectCompressionBomb(buffer, ext);
+      if (!bombCheck.valid) {
+        auditLogger.log('upload-image', {
+          userId, request, success: false, error: 'Possible compression bomb',
+          metadata: { ratio: bombCheck.ratio },
+        });
+        return NextResponse.json(
+          { success: false, error: "文件疑似压缩炸弹" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 13. 计算文件hash用于去重
+    const fileHash = createHash('sha256').update(buffer).digest('hex');
+
+    // 14. 初始化存储
+    const storage = new S3Storage({
+      endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
+      accessKey: "",
+      secretKey: "",
+      bucketName: process.env.COZE_BUCKET_NAME,
+      region: "cn-beijing",
+    });
+
+    // 15. 生成安全的文件名（包含hash防止重复上传）
+    const safeExt = ext;
+    const safeName = `${Date.now()}_${fileHash.slice(0, 8)}.${safeExt}`;
+    const objectKey = `edit-uploads/${safeName}`;
+
+    // 16. 上传文件
+    const uploadedKey = await storage.uploadFile({
+      fileContent: buffer,
+      fileName: objectKey,
+      contentType: file.type,
+    });
+
+    // 17. 生成访问URL（短期有效）
+    const imageUrl = await storage.generatePresignedUrl({
+      key: uploadedKey,
+      expireTime: 3600, // 1小时
+    });
+
+    success = true;
+    auditLogger.log('upload-image', {
+      userId, request, success: true, duration: Date.now() - startTime,
+      metadata: {
+        key: uploadedKey,
+        size: file.size,
+        mimeType: file.type,
+        hash: fileHash,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        key: uploadedKey,
+        url: imageUrl,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        hash: fileHash,
+      },
+    });
+
+  } catch (error) {
+    console.error("Upload image error:", error);
+    const errorMessage = error instanceof Error ? error.message : "上传失败";
+
+    auditLogger.log('upload-image', {
+      userId, request, success: false, error: errorMessage,
+      duration: Date.now() - startTime,
+    });
+
+    return NextResponse.json(
+      { success: false, error: `图片上传失败` },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * 验证文件头（魔数）是否为有效图片
+ */
+function validateImageHeader(header: Buffer, ext: string): boolean {
+  // JPEG: FF D8 FF
+  if (header[0] === 0xFF && header[1] === 0xD8 && header[2] === 0xFF) {
+    return ext === 'jpg' || ext === 'jpeg';
+  }
+  
+  // PNG: 89 50 4E 47
+  if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47) {
+    return ext === 'png';
+  }
+  
+  // GIF: 47 49 46 38
+  if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x38) {
+    return ext === 'gif';
+  }
+  
+  // WebP: 52 49 46 46 (RIFF) + later WEBP
+  if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46) {
+    // 需要检查后面是否为 WEBP
+    if (header.length >= 12 && 
+        header[8] === 0x57 && header[9] === 0x45 && 
+        header[10] === 0x42 && header[11] === 0x50) {
+      return ext === 'webp';
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * 验证SVG安全性
+ */
+function validateSVG(buffer: Buffer): { valid: boolean; reason?: string } {
+  try {
+    const content = buffer.toString('utf-8');
+    
+    // 检查危险元素
+    for (const element of SVG_DANGEROUS_ELEMENTS) {
+      if (content.includes(`<${element}`) || content.includes(`</${element}`)) {
+        return { valid: false, reason: `包含危险元素: <${element}>` };
+      }
+    }
+    
+    // 检查危险属性
+    for (const attr of SVG_DANGEROUS_ATTRS) {
+      if (content.includes(attr)) {
+        return { valid: false, reason: `包含危险属性: ${attr}` };
+      }
+    }
+    
+    // 检查javascript:协议
+    if (/javascript:/i.test(content)) {
+      return { valid: false, reason: '包含javascript:协议' };
+    }
+    
+    // 检查data:url（可能用于内嵌脚本）
+    if (/data:[^,]*text\/html/i.test(content)) {
+      return { valid: false, reason: '包含data:html内容' };
+    }
+    
+    return { valid: true };
+  } catch {
+    return { valid: false, reason: '无法解析SVG' };
+  }
+}
+
+/**
+ * 检测是否为压缩炸弹
+ */
+function detectCompressionBomb(buffer: Buffer, ext: string): { valid: boolean; ratio?: number } {
+  // 只对支持压缩的格式进行检测
+  if (!isCompressedImage(ext)) {
+    return { valid: true };
+  }
+  
+  // 计算压缩比（非常粗略的估计）
+  // 真实检测需要解压缩并检查展开后的大小
+  const estimatedExpandedSize = buffer.length * 10; // 假设最大10倍
+  
+  // 如果估计的展开大小超过限制，认为可能是压缩炸弹
+  const MAX_ESTIMATED_SIZE = 50 * 1024 * 1024; // 50MB
+  if (estimatedExpandedSize > MAX_ESTIMATED_SIZE) {
+    return { valid: false, ratio: estimatedExpandedSize / buffer.length };
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * 判断是否为压缩格式图片
+ */
+function isCompressedImage(ext: string): boolean {
+  return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+}
+```
+
+---
+
+### 第三阶段：移动端兼容优化
+
+#### 3.1 添加移动端视口和安全配置
+
+**修改文件：** `/src/app/layout.tsx`
+
+```typescript
+import type { Metadata, Viewport } from 'next';
+import { Inspector } from 'react-dev-inspector';
+import { ClientProviders } from '@/components/client-providers';
+import { GlobalErrorBoundary } from '@/components/global-error-boundary';
+import './globals.css';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false, // 禁止缩放，防止页面缩放错乱
+  viewportFit: 'cover',
+  themeColor: '#0A0A0A',
+};
+
+export const metadata: Metadata = {
+  title: {
+    default: 'NVWA 女娲 - AI短剧智创聚合平台',
+    template: '%s | NVWA 女娲',
+  },
+  description:
+    'NVWA 女娲是一站式AI短剧智创聚合平台，支持从创意到成片的全流程短剧创作。',
+  keywords: [
+    'NVWA',
+    '女娲',
+    'AI短剧',
+    '短剧创作',
+    'AI编剧',
+    '文生视频',
+    '工作流',
+    '节点编排',
+  ],
+  // iOS Safari 专用
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'NVWA 女娲',
+  },
+  // 格式化不安全的链接
+  formatDetection: {
+    email: false,
+    telephone: false,
+    address: false,
+  },
+};
+```
+
+#### 3.2 创建移动端检测Hook
+
+**创建文件：** `/src/hooks/useMobile.ts`
+
+```typescript
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+
+export type DeviceType = "mobile" | "tablet" | "desktop";
+
+export interface MobileInfo {
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  deviceType: DeviceType;
+  os: "ios" | "android" | "windows" | "mac" | "linux" | "other";
+  browser: "safari" | "chrome" | "firefox" | "edge" | "other";
+  supportsTouch: boolean;
+  isLowPerformance: boolean;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+/**
+ * 移动端检测Hook
+ * 检测设备类型、操作系统、浏览器等信息
+ */
+export function useMobile(): MobileInfo {
+  const [info, setInfo] = useState<MobileInfo>({
+    isMobile: false,
+    isTablet: false,
+    isDesktop: true,
+    deviceType: "desktop",
+    os: "other",
+    browser: "other",
+    supportsTouch: false,
+    isLowPerformance: false,
+    viewportWidth: 0,
+    viewportHeight: 0,
+  });
+
+  useEffect(() => {
+    // 在客户端检测
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    // 检测操作系统
+    let os: MobileInfo["os"] = "other";
+    if (/iphone|ipad|ipod/i.test(userAgent)) {
+      os = "ios";
+    } else if (/android/i.test(userAgent)) {
+      os = "android";
+    } else if (/windows/i.test(userAgent)) {
+      os = "windows";
+    } else if (/mac/i.test(userAgent)) {
+      os = "mac";
+    } else if (/linux/i.test(userAgent)) {
+      os = "linux";
+    }
+
+    // 检测浏览器
+    let browser: MobileInfo["browser"] = "other";
+    if (/safari/i.test(userAgent) && !/chrome/i.test(userAgent)) {
+      browser = "safari";
+    } else if (/chrome/i.test(userAgent)) {
+      browser = "chrome";
+    } else if (/firefox/i.test(userAgent)) {
+      browser = "firefox";
+    } else if (/edge/i.test(userAgent)) {
+      browser = "edge";
+    }
+
+    // 检测设备类型
+    const width = window.innerWidth;
+    const isMobile = width < 768;
+    const isTablet = width >= 768 && width < 1024;
+    const isDesktop = width >= 1024;
+
+    // 检测触摸支持
+    const supportsTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
+    // 检测低性能设备（简单判断）
+    const isLowPerformance = 
+      /iphone|ipad|ipod/i.test(userAgent) || // iOS设备
+      /android.*mobile/i.test(userAgent);     // 低端Android手机
+
+    setInfo({
+      isMobile,
+      isTablet,
+      isDesktop,
+      deviceType: isMobile ? "mobile" : isTablet ? "tablet" : "desktop",
+      os,
+      browser,
+      supportsTouch,
+      isLowPerformance,
+      viewportWidth: width,
+      viewportHeight: window.innerHeight,
+    });
+
+    // 监听视口变化
+    const handleResize = () => {
+      setInfo(prev => ({
+        ...prev,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }));
+    };
+
+    window.addEventListener("resize", handleResize, { passive: true });
+    
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  return info;
+}
+
+/**
+ * 移动端优化的条件渲染
+ */
+export function useMobileOptimized() {
+  const mobileInfo = useMobile();
+  
+  return useMemo(() => ({
+    ...mobileInfo,
+    // 是否应该启用简化渲染
+    shouldSimplify: mobileInfo.isLowPerformance || mobileInfo.isMobile,
+    // 是否应该禁用动画
+    shouldDisableAnimation: mobileInfo.isLowPerformance,
+    // 是否应该使用较小的缓冲区
+    bufferSize: mobileInfo.isLowPerformance ? 64 : 256,
+    // 是否应该减少并发
+    maxConcurrentRequests: mobileInfo.isMobile ? 2 : 5,
+  }), [mobileInfo]);
+}
+```
+
+#### 3.3 创建移动端优化组件
+
+**创建文件：** `/src/components/ui/mobile-optimized.tsx`
+
+```typescript
+"use client";
+
+import { ReactNode, useMemo } from "react";
+import { useMobileOptimized } from "@/hooks/useMobile";
+
+interface MobileOptimizedProps {
+  children: ReactNode;
+  /**
+   * 移动端渲染的简化版本
+   */
+  mobileFallback?: ReactNode;
+  /**
+   * 低性能设备渲染的简化版本
+   */
+  lowPerfFallback?: ReactNode;
+  /**
+   * 是否在移动端懒加载
+   */
+  lazyOnMobile?: boolean;
+}
+
+/**
+ * 移动端优化组件
+ * 根据设备性能选择渲染不同版本
+ */
+export function MobileOptimized({
+  children,
+  mobileFallback,
+  lowPerfFallback,
+  lazyOnMobile = false,
+}: MobileOptimizedProps) {
+  const { isMobile, isLowPerformance, shouldSimplify } = useMobileOptimized();
+
+  // 如果是低性能设备，优先显示低性能版本
+  if (isLowPerformance && lowPerfFallback) {
+    return <>{lowPerfFallback}</>;
+  }
+
+  // 如果是移动端且有简化版本，显示简化版本
+  if (isMobile && mobileFallback) {
+    return <>{mobileFallback}</>;
+  }
+
+  // 如果需要简化渲染
+  if (shouldSimplify && lowPerfFallback) {
+    return <>{lowPerfFallback}</>;
+  }
+
+  return <>{children}</>;
+}
+
+/**
+ * 移动端禁用动画的包装器
+ */
+export function AnimationWrapper({
+  children,
+  animationClassName = "",
+}: {
+  children: ReactNode;
+  animationClassName?: string;
+}) {
+  const { shouldDisableAnimation } = useMobileOptimized();
+
+  return (
+    <div className={shouldDisableAnimation ? "" : animationClassName}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 移动端图片懒加载
+ */
+export function MobileLazyImage({
+  src,
+  alt,
+  className = "",
+  placeholder = "/placeholder.png",
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  placeholder?: string;
+}) {
+  const { isMobile } = useMobileOptimized();
+  
+  // 移动端使用更轻量的占位符
+  const actualPlaceholder = isMobile ? placeholder : placeholder;
+  
+  // 使用原生loading="lazy"
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      decoding={isMobile ? "async" : "sync"}
+      onError={(e) => {
+        e.currentTarget.src = actualPlaceholder;
+      }}
+    />
+  );
+}
+```
+
+#### 3.4 添加iOS Safari专项兼容CSS
+
+**修改文件：** `/src/app/globals.css` (在文件末尾添加)
+
+```css
+/* ============================================
+   iOS Safari 专项兼容
+   ============================================ */
+
+/* 防止iOS Safari页面缩放 */
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* 防止iOS Safari按钮圆角问题 */
+button, 
+input, 
+select, 
+textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+}
+
+/* iOS Safari输入框内阴影 */
+input, 
+textarea {
+  -webkit-appearance: none;
+  -webkit-box-shadow: none;
+  box-shadow: none;
+}
+
+/* iOS Safari安全区域 */
+.safe-area-inset-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-inset-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-inset-left {
+  padding-left: env(safe-area-inset-left);
+}
+
+.safe-area-inset-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* 移动端滚动优化 */
+@supports (-webkit-touch-callout: none) {
+  /* iOS设备 */
+  .scroll-container {
+    -webkit-overflow-scrolling: touch;
+    overflow-y: scroll;
+    -webkit-transform: translate3d(0, 0, 0);
+  }
+  
+  /* 防止iOS Safari弹性滚动 */
+  body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+}
+
+/* 移动端触摸反馈 */
+@media (hover: none) and (pointer: coarse) {
+  /* 移除hover效果 */
+  .hover\:bg-primary:hover {
+    background-color: var(--primary);
+  }
+  
+  /* 添加触摸反馈 */
+  .touch-feedback {
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    active: 0.98;
+  }
+  
+  /* 触摸时禁用文本选择 */
+  .no-select {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* 低性能设备优化 */
+@media (max-width: 768px) {
+  /* 减少阴影 */
+  .shadow-lg {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+  }
+  
+  /* 简化动画 */
+  .transition-all {
+    transition-duration: 150ms;
+    transition-timing-function: ease-out;
+  }
+  
+  /* 禁用复杂效果 */
+  .blur-sm {
+    filter: none;
+  }
+  
+  .backdrop-blur {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* ============================================
+   移动端性能优化
+   ============================================ */
+
+/* 减少重绘 */
+@media (max-width: 768px) {
+  * {
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+  
+  /* 禁用图片跨屏拖动 */
+  img {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+  
+  /* 禁用触摸延迟 */
+  button, 
+  a, 
+  input, 
+  select, 
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+/* iPhone X 及以上刘海屏适配 */
+@supports (padding: env(safe-area-inset-top)) {
+  .notch-safe {
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+}
+
+/* 防止iOS Safari输入框聚焦时页面缩放 */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
+input[type="password"],
+textarea,
+select {
+  font-size: 16px !important; /* iOS Safari必须>=16px才不缩放 */
+}
+```
+
+#### 3.5 创建移动端检测中间件（可选）
+
+**创建文件：** `/src/middleware/mobile-detect.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+
+/**
+ * 移动端检测中间件
+ * 可以用于：
+ * 1. 重定向到移动端专用页面
+ * 2. 设置移动端响应头
+ * 3. 启用移动端优化模式
+ */
+export function mobileDetectMiddleware(request: NextRequest) {
+  const userAgent = request.headers.get("user-agent")?.toLowerCase() || "";
+  
+  // 检测移动设备
+  const isMobile = /iphone|ipod|ipad|android|blackberry|windows phone/i.test(userAgent);
+  const isTablet = /ipad|android(?!.*mobile)/i.test(userAgent);
+  
+  // 检测iOS Safari
+  const isSafari = /safari/i.test(userAgent) && !/chrome/i.test(userAgent);
+  const isIOS = /iphone|ipad|ipod/i.test(userAgent);
+  
+  // 检测低端Android
+  const isLowEndAndroid = /android.*mobile.* armeabi/i.test(userAgent);
+  
+  // 创建设备信息响应头
+  const response = NextResponse.next();
+  
+  if (isMobile || isTablet) {
+    response.headers.set("X-Device-Type", isTablet ? "tablet" : "mobile");
+    response.headers.set("X-Is-Mobile", "true");
+  }
+  
+  if (isSafari) {
+    response.headers.set("X-Is-Safari", "true");
+  }
+  
+  if (isIOS) {
+    response.headers.set("X-Is-iOS", "true");
+  }
+  
+  if (isLowEndAndroid) {
+    response.headers.set("X-Low-End-Device", "true");
+  }
+  
+  return response;
+}
+```
+
+---
+
+## ⛔ 禁止事项
+
+- ❌ 禁止流式请求不带AbortController
+- ❌ 禁止SSE连接无超时
+- ❌ 禁止上传文件无大小限制
+- ❌ 禁止SVG文件不过滤危险元素
+- ❌ 禁止移动端可随意缩放
+- ❌ 禁止iOS输入框font-size<16px
+- ❌ 禁止移动端启用复杂动画
+
+---
+
+## ✅ 必须事项
+
+- ✅ 所有流式请求必须传递AbortController
+- ✅ 所有SSE连接必须有心跳检测
+- ✅ 所有上传必须验证文件头魔数
+- ✅ SVG文件必须过滤危险元素
+- ✅ 移动端必须禁用缩放
+- ✅ iOS输入框必须font-size>=16px
+- ✅ 移动端必须处理安全区域
+
+---
+
+## 📊 检测清单
+
+| 检测项 | 方法 | 标准 |
+|-------|------|------|
+| AbortController | 代码审查 | 所有流式接口必须传递signal |
+| SSE心跳 | 30秒无数据即断连 | 每30秒必须有数据或心跳 |
+| 文件上传 | 检查魔数 | 必须与扩展名匹配 |
+| SVG安全 | 过滤危险元素 | 不允许script/iframe等 |
+| 移动端缩放 | 检查viewport | user-scalable=no |
+| iOS字体 | 检查CSS | font-size>=16px |
+
+---
+
+## 🎯 修复优先级
+
+| 阶段 | 内容 | 优先级 | 风险 |
+|-----|------|-------|------|
+| **第一阶段** | AbortController传递 | 🔴 紧急 | 高 |
+| **第二阶段** | SVG安全过滤 | 🔴 紧急 | 高 |
+| **第三阶段** | 移动端viewport | 🟠 高 | 中 |
+| **第四阶段** | iOS Safari兼容 | 🟠 高 | 中 |
+| **第五阶段** | 压缩炸弹检测 | 🟡 中 | 低 |
+
+**建议立即执行第一、第二阶段，防止用户关闭页面后AI继续运行和SVG XSS攻击。**

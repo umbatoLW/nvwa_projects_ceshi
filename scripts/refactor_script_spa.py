@@ -153,7 +153,7 @@ new_left_buttons = '''<div>
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "script" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
                     >
                       <FileText className="w-4 h-4 text-[#0ABAB5]" />
-                      <span>剧本预览</span>
+                      <span>剧本编辑</span>
                     </button>
                     <div>
                       <button

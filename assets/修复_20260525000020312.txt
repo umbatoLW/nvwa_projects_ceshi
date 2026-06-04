@@ -1,0 +1,208 @@
+
+
+## 🚨 网站全面审查与修复指令
+
+#### 1.2 数据库缺少封面图字段
+
+**问题**：封面图无法持久化存储，切换页面或登出后消失
+
+**根本原因**：
+- API尝试保存 `coverImage` → `cover_image`
+- 但数据库schema中没有 `cover_image` 字段
+- 导致封面图保存被静默忽略
+
+**修复方案1 - 添加数据库字段**：
+
+在 Supabase 数据库中执行：
+
+```sql
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS cover_image TEXT DEFAULT '';
+```
+
+**修复方案2 - 修改schema文件**：`/src/storage/database/shared/schema.ts`
+
+```typescript
+export const scripts = pgTable("scripts", {
+  // ... 现有字段 ...
+  
+  // 添加封面图字段（在 episodeCount 之后）
+  episodeCount: integer("episode_count").default(0),
+  coverImage: text("cover_image").default("").notNull(),  // 新增
+  wordCount: integer("word_count").default(0),
+  sceneCount: integer("scene_count").default(0),
+}, (table) => [
+  // ... 现有索引 ...
+]);
+```
+
+**验证修复**：
+1. 生成封面图
+2. 刷新页面
+3. 验证封面图仍然显示
+4. 登出并重新登录
+5. 验证封面图仍然显示
+
+---
+
+### 🟠 第二部分：重要问题
+
+---
+
+#### 2.1 空catch块 - 静默失败
+
+**问题**：错误被静默忽略，用户不知道发生了什么
+
+**修复文件1**：`/src/lib/api-client.ts`
+
+```typescript
+// 第24行修改为：
+}).catch((err) => {
+  console.error("API请求失败:", err);
+});
+```
+
+**修复文件2**：`/src/app/scripts/[id]/page.tsx`
+
+```typescript
+// 第1045行修改为：
+try { 
+  raw = JSON.parse(raw); 
+} catch (err) {
+  console.error("JSON解析失败:", err);
+  // 如果解析失败，尝试清理后重试
+  try {
+    raw = JSON.parse(raw.replace(/[\x00-\x1F\x7F]/g, ''));
+  } catch {
+    // 如果还是失败，使用原始字符串
+    raw = data.content;
+  }
+}
+
+// 第1123行同样的修复
+```
+
+---
+
+#### 2.2 缺少环境变量示例文件
+
+**问题**：没有 `.env.example` 文件，开发者不知道需要配置哪些环境变量
+
+**创建文件**：`/e:\projects\.env.example`
+
+```
+# ===========================================
+# 数据库配置
+# ===========================================
+COZE_SUPABASE_URL=https://your-project.supabase.co
+COZE_SUPABASE_ANON_KEY=your-anon-key
+COZE_SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# ===========================================
+# AI API配置
+# ===========================================
+DASHSCOPE_API_KEY=your-dashscope-api-key
+DEEPSEEK_API_KEY=your-deepseek-api-key
+KIMI_API_KEY=your-kimi-api-key
+
+# ===========================================
+# 存储配置
+# ===========================================
+COZE_BUCKET_ENDPOINT_URL=https://your-bucket-endpoint
+COZE_BUCKET_NAME=your-bucket-name
+
+# ===========================================
+# 项目环境
+# ===========================================
+# 设置为 PROD 表示生产环境
+COZE_PROJECT_ENV=development
+NODE_ENV=development
+```
+
+---
+
+### 🟡 第三部分：代码质量优化
+
+---
+
+#### 3.1 生产环境日志控制
+
+**问题**：大量 `console.log` 在生产环境可能泄露敏感信息
+
+**建议**：在关键API中添加日志级别控制
+
+```typescript
+// 创建日志工具：/src/lib/logger.ts
+const LOG_LEVEL = process.env.NODE_ENV === "production" ? "error" : "debug";
+
+export const logger = {
+  debug: (...args: unknown[]) => {
+    if (LOG_LEVEL === "debug") console.log("[DEBUG]", ...args);
+  },
+  info: (...args: unknown[]) => {
+    if (LOG_LEVEL !== "silent") console.log("[INFO]", ...args);
+  },
+  error: (...args: unknown[]) => {
+    console.error("[ERROR]", ...args);
+  },
+};
+```
+
+**应用到关键文件**：
+
+```typescript
+// /src/app/api/ai/generate-image/route.ts
+// 将 console.log 替换为 logger.debug
+
+import { logger } from "@/lib/logger";
+
+// 修改前
+console.log("[Generate Image API] Using API Key:", apiKey?.substring(0, 10) + "...");
+
+// 修改后
+logger.debug("[Generate Image API] Using API Key:", apiKey?.substring(0, 10) + "...");
+```
+
+---
+
+### ⛔ 第五部分：禁止事项
+
+---
+
+2. **禁止** 在任何文件中硬编码密钥、密码、Token
+3. **禁止** 使用空的 `catch {}` 块
+4. **禁止** 删除已实现的工作流功能（编辑、选择、应用）
+5. **禁止** 修改数据库字段名（保持 coverImage → cover_image）
+6. **禁止** 删除错误提示（toast、console.error等）
+8. **禁止** 在关键操作（删除、清空）前不添加确认对话框
+
+---
+
+### 📋 第六部分：修复优先级
+
+---
+
+| 优先级 | 问题 | 严重程度 | 修复时间 |
+|--------|------|---------|---------|
+| P0 | 数据库缺少cover_image字段 | 🔴 严重 | 5分钟 |
+| P1 | 空catch块 | 🟠 重要 | 5分钟 |
+| P2 | 创建.env.example | 🟡 中等 | 3分钟 |
+| P3 | 生产环境日志控制 | 🟢 低 | 10分钟 |
+
+---
+
+### ✅ 第七部分：验证清单
+
+---
+
+#### 上线前必须验证
+
+| 测试项 | 验证方法 | 状态 |
+|--------|---------|------|
+| 封面图持久化 | 生成封面 → 刷新页面 → 封面仍显示 | ⬜ |
+| 错误提示 | 故意触发错误 → 有错误提示 | ⬜ |
+| 角色工作流 | 提取 → 编辑 → 应用 → 角色库有数据 | ⬜ |
+| 服装工作流 | 提取 → 应用 → 资产库有数据 | ⬜ |
+| 积分系统 | 消费积分 → 余额正确扣减 | ⬜ |
+| AI功能 | 生成图片/视频/3D → 正常返回 | ⬜ |
+
+---

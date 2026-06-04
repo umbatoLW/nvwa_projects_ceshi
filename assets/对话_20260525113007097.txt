@@ -1,0 +1,91 @@
+          
+# AI 创作功能参数问题分析与修复指令
+
+## 问题分析
+
+经过全面搜索，我发现**确实存在多处参数不匹配问题**，但并非所有AI创作功能都受影响：
+
+### 问题分布表
+
+| 功能模块 | 文件路径 | 参数使用 | 状态 |
+|----------|----------|----------|------|
+| 分镜生图 | [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx) | `count: 1` | ⚠️ 需修复 |
+| 工作区节点生图 | [`src/app/workspace/page.tsx`](file:///d:/nvwa_projects/src/app/workspace/page.tsx) | `count: 1` | ⚠️ 需修复 |
+| 工作区节点生图 | [`src/components/workspace/node-components.tsx`](file:///d:/nvwa_projects/src/components/workspace/node-components.tsx) | `count: 1` | ⚠️ 需修复 |
+| 文生图页面 | [`src/app/create/image/page.tsx`](file:///d:/nvwa_projects/src/app/create/image/page.tsx) | `n: currentCount` | ✅ 正确 |
+| 图片编辑 | [`src/app/create/edit/page.tsx`](file:///d:/nvwa_projects/src/app/create/edit/page.tsx) | `n: 1` | ✅ 正确 |
+| AI生视频 | [`src/app/create/video/page.tsx`](file:///d:/nvwa_projects/src/app/create/video/page.tsx) | 无此参数 | ✅ 不涉及 |
+| AI生3D | [`src/app/create/3d/page.tsx`](file:///d:/nvwa_projects/src/app/create/3d/page.tsx) | 无此参数 | ✅ 不涉及 |
+
+---
+
+## 修复指令
+
+### 步骤1：修复分镜页面生图
+
+**文件**: [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx)
+
+```typescript
+// 第1890行修改
+body: JSON.stringify({ prompt: board.description, ratio, count: 1 })
+// 改为
+body: JSON.stringify({ prompt: board.description, ratio, n: 1 })
+```
+
+### 步骤2：修复工作区页面生图（两处）
+
+**文件**: [`src/app/workspace/page.tsx`](file:///d:/nvwa_projects/src/app/workspace/page.tsx)
+
+```typescript
+// 第451行修改
+body: JSON.stringify({ prompt, ratio, count: 1 })
+// 改为
+body: JSON.stringify({ prompt, ratio, n: 1 })
+
+// 第474行修改  
+body = { prompt: upstream || description || label || '短剧场景', ratio, count: 1 };
+// 改为
+body = { prompt: upstream || description || label || '短剧场景', ratio, n: 1 };
+```
+
+### 步骤3：修复工作区节点组件生图
+
+**文件**: [`src/components/workspace/node-components.tsx`](file:///d:/nvwa_projects/src/components/workspace/node-components.tsx)
+
+```typescript
+// 第441行修改
+body: JSON.stringify({ prompt, ratio, count: 1 })
+// 改为
+body: JSON.stringify({ prompt, ratio, n: 1 })
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 分镜生图 | 使用 `n` 参数，正常生成 |
+| 工作区生图 | 使用 `n` 参数，正常生成 |
+| 工作区节点生图 | 使用 `n` 参数，正常生成 |
+| 文生图页面 | 保持使用 `n` 参数，正常生成 |
+| 图片编辑 | 保持使用 `n` 参数，正常编辑 |
+| AI生视频 | 不涉及此参数，正常生成 |
+| AI生3D | 不涉及此参数，正常生成 |
+
+---
+
+## 总结
+
+**已包含在修复范围内的问题**：
+- ✅ 分镜页面生图
+- ✅ 工作区页面生图
+- ✅ 工作区节点组件生图
+
+**无需修复的功能**：
+- ✅ 文生图页面（已正确使用 `n` 参数）
+- ✅ 图片编辑（已正确使用 `n` 参数）
+- ✅ AI生视频（不涉及此参数）
+- ✅ AI生3D（不涉及此参数）
+
+执行以上修改后，所有AI创作功能的参数命名将保持一致，避免因前后端参数不匹配导致的生图失败问题。

@@ -1,0 +1,696 @@
+我来结合GPT的指令重新分析当前项目，写一份详细的修复指令。
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\hooks\useAIStream.ts
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\hooks\use-ai-generation.ts
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\components\script-views\ScriptEditor.tsx
+          
+
+        
+            
+toolName: view_folder
+            
+status: success
+          
+e:\projects\src\app\workspace
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\workspace\page.tsx
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: useState\(
+          
+根据我对项目文件的详细分析，结合GPT的检测指令，现在生成一份完整的性能优化修复方案。
+
+---
+
+# 🚨 第一轮检测（架构层） - React性能优化指令
+
+## 📊 检测结果
+
+### 一、前端风险分析
+
+#### 1. React状态风暴
+**存在问题**：
+- 项目中存在大量 `useState`：**约100+行** useState 声明
+- 大量 `useEffect` 和自定义 Hook
+- AI Stream Hook 实时更新状态
+- 工作流节点状态频繁变更
+
+**重点危险文件**：
+- `useAIStream.ts`
+- `use-ai-generation.ts`
+- `ScriptEditor.tsx`
+- `workspace/page.tsx`
+- `scripts/[id]/page.tsx`（**30+个 useState**）
+
+**风险**：
+- 🟥 高并发情况下页面重复渲染
+- 🟥 CPU暴涨
+- 🟥 浏览器内存泄漏
+- 🟥 页面越来越卡
+
+---
+
+## 🛠️ 修复方案
+
+### 一、所有AI流状态统一管理
+
+#### 1.1 创建全局AI流状态管理
+
+**创建文件**：`/src/stores/ai-stream-store.ts`
+
+```typescript
+import { create } from "zustand";
+import { subscribeWithSelector } from "zustand/middleware";
+
+export interface AIStreamState {
+  isRunning: boolean;
+  progress: number;
+  stage: string;
+  message: string;
+  error: string | null;
+}
+
+interface AIStreamStore {
+  streams: Record<string, AIStreamState>;
+  setStream: (id: string, state: Partial<AIStreamState>) => void;
+  removeStream: (id: string) => void;
+  resetAll: () => void;
+}
+
+const initialStreamState: AIStreamState = {
+  isRunning: false,
+  progress: 0,
+  stage: "",
+  message: "",
+  error: null,
+};
+
+export const useAIStreamStore = create<AIStreamStore>()(
+  subscribeWithSelector((set) => ({
+    streams: {},
+    
+    setStream: (id, state) =>
+      set((prev) => ({
+        streams: {
+          ...prev.streams,
+          [id]: {
+            ...(prev.streams[id] || initialStreamState),
+            ...state,
+          },
+        },
+      })),
+    
+    removeStream: (id) =>
+      set((prev) => {
+        const { [id]: _, ...rest } = prev.streams;
+        return { streams: rest };
+      }),
+    
+    resetAll: () => set({ streams: {} }),
+  }))
+);
+```
+
+---
+
+#### 1.2 重构 `useAIStream.ts`
+
+**文件**：`/src/hooks/useAIStream.ts`
+
+```typescript
+"use client";
+
+import { useCallback, useRef, useMemo } from "react";
+import { useAIStreamStore, type AIStreamState } from "@/stores/ai-stream-store";
+
+const initialState: AIStreamState = {
+  isRunning: false,
+  progress: 0,
+  stage: "",
+  message: "",
+  error: null,
+};
+
+export function useAIStream(streamId?: string) {
+  const id = useMemo(() => streamId || crypto.randomUUID(), [streamId]);
+  const streamState = useAIStreamStore((state) => state.streams[id] || initialState);
+  const setStream = useAIStreamStore((state) => state.setStream);
+  const removeStream = useAIStreamStore((state) => state.removeStream);
+  
+  const abortRef = useRef<AbortController | null>(null);
+  const batchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingUpdateRef = useRef<Partial<AIStreamState>>({});
+
+  const batchUpdate = useCallback((updates: Partial<AIStreamState>) => {
+    pendingUpdateRef.current = { ...pendingUpdateRef.current, ...updates };
+    
+    if (batchTimerRef.current) {
+      clearTimeout(batchTimerRef.current);
+    }
+    
+    batchTimerRef.current = setTimeout(() => {
+      setStream(id, pendingUpdateRef.current);
+      pendingUpdateRef.current = {};
+    }, 16); // 约60fps
+  }, [id, setStream]);
+
+  const run = useCallback(
+    async (url: string, body?: Record<string, unknown>): Promise<unknown> => {
+      batchUpdate({ ...initialState, isRunning: true });
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        let token = "";
+        if (typeof window !== "undefined") {
+          const session = localStorage.getItem("nvwa_session");
+          if (session) {
+            try {
+              const parsed = JSON.parse(session);
+              token = parsed?.access_token || "";
+            } catch (err) {
+              console.error("解析session失败:", err);
+            }
+          }
+        }
+        
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ ...body, _stream: true }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
+        if (!response.body) {
+          throw new Error("Response body is null");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: unknown = null;
+        let accumulatedText = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (!jsonStr) continue;
+            
+            try {
+              const data = JSON.parse(jsonStr);
+              
+              const hasType = data.type !== undefined;
+              const hasContent = data.content !== undefined;
+              
+              if (hasContent && (!hasType || data.type === "text" || data.type === "delta")) {
+                accumulatedText += data.content || "";
+                batchUpdate({ message: data.content || streamState.message });
+                continue;
+              }
+              
+              if (data.type === "progress") {
+                batchUpdate({
+                  progress: data.progress ?? streamState.progress,
+                  stage: data.stage ?? streamState.stage,
+                  message: data.message ?? streamState.message,
+                });
+              } else if (data.type === "complete") {
+                finalResult = data.data ?? (accumulatedText ? { content: accumulatedText } : data);
+                batchUpdate({
+                  isRunning: false,
+                  progress: 100,
+                  stage: "complete",
+                  message: data.message ?? "完成",
+                });
+              } else if (data.type === "error") {
+                throw new Error(data.message ?? "未知错误");
+              }
+            } catch (parseError) {
+              if (parseError instanceof SyntaxError) {
+                // ignore malformed lines
+              } else {
+                throw parseError;
+              }
+            }
+          }
+        }
+
+        if (finalResult === null && accumulatedText) {
+          finalResult = { content: accumulatedText };
+        }
+        
+        if (finalResult === null) {
+          throw new Error("未收到完整结果");
+        }
+        return finalResult;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "请求失败";
+        batchUpdate({ isRunning: false, error: msg });
+        throw err;
+      } finally {
+        if (batchTimerRef.current) {
+          clearTimeout(batchTimerRef.current);
+        }
+      }
+    },
+    [id, streamState.message, streamState.progress, streamState.stage, batchUpdate]
+  );
+
+  const abort = useCallback(() => {
+    abortRef.current?.abort();
+    batchUpdate({ isRunning: false, error: "已取消" });
+  }, [batchUpdate]);
+
+  const reset = useCallback(() => {
+    abortRef.current?.abort();
+    setStream(id, initialState);
+  }, [id, setStream]);
+
+  return {
+    ...streamState,
+    run,
+    abort,
+    reset,
+  };
+}
+```
+
+---
+
+### 二、工作区页面优化
+
+#### 2.1 节点组件拆分与性能优化
+
+**创建文件**：`/src/components/workspace/NodePalette.tsx`
+
+```typescript
+"use client";
+
+import React, { memo, useMemo } from 'react';
+import { Type, Scissors, Users, Shield, Image, Video, FileOutput } from 'lucide-react';
+
+interface PaletteItem {
+  type: string;
+  label: string;
+  icon: React.ComponentType<any>;
+}
+
+interface PaletteCategory {
+  category: string;
+  color: string;
+  items: PaletteItem[];
+}
+
+const paletteItems: PaletteCategory[] = [
+  {
+    category: '输入',
+    color: '#0ABAB5',
+    items: [
+      { type: 'input', label: '创意输入', icon: Type },
+      { type: 'input', label: '角色导入', icon: Users },
+      { type: 'input', label: '素材上传', icon: Image },
+    ],
+  },
+  {
+    category: '处理',
+    color: '#A855F7',
+    items: [
+      { type: 'process', label: '剧本创作', icon: Type },
+      { type: 'process', label: '分镜拆分', icon: Scissors },
+      { type: 'process', label: '角色提取', icon: Users },
+      { type: 'process', label: '内容审查', icon: Shield },
+    ],
+  },
+  {
+    category: '生成',
+    color: '#33CCCC',
+    items: [
+      { type: 'text2image', label: '文生图', icon: Image },
+      { type: 'text2video', label: '文生视频', icon: Video },
+      { type: 'image2video', label: '图生视频', icon: Video },
+      { type: 'characterViews', label: '角色三视图', icon: Users },
+    ],
+  },
+  {
+    category: '输出',
+    color: '#22C55E',
+    items: [
+      { type: 'output', label: '剧本输出', icon: FileOutput },
+      { type: 'output', label: '成片输出', icon: FileOutput },
+    ],
+  },
+];
+
+interface NodePaletteProps {
+  onDragStart: (e: React.DragEvent, type: string, label: string) => void;
+}
+
+export const NodePalette = memo<NodePaletteProps>(({ onDragStart }) => {
+  return (
+    <div className="absolute left-4 top-4 z-10 w-64 bg-[#1A1A1A] border border-[#333333] rounded-xl p-4 shadow-2xl">
+      <h3 className="text-white font-bold mb-4 text-sm">节点面板</h3>
+      <div className="space-y-4">
+        {paletteItems.map((cat) => (
+          <div key={cat.category}>
+            <div 
+              className="text-xs font-semibold mb-2 uppercase tracking-wider"
+              style={{ color: cat.color }}
+            >
+              {cat.category}
+            </div>
+            <div className="space-y-2">
+              {cat.items.map((item) => (
+                <div
+                  key={item.label}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, item.type, item.label)}
+                  className="flex items-center gap-2 p-2 rounded-lg bg-[#0F0F0F] hover:bg-[#252525] cursor-grab active:cursor-grabbing transition-colors"
+                >
+                  <item.icon size={16} style={{ color: cat.color }} />
+                  <span className="text-gray-300 text-sm">{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+NodePalette.displayName = 'NodePalette';
+```
+
+---
+
+### 三、创建通用优化工具
+
+#### 3.1 防抖Hook
+
+**创建文件**：`/src/hooks/useDebounce.ts`
+
+```typescript
+import { useState, useEffect, useCallback, useRef } from "react";
+
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
+export function useDebouncedCallback<T extends (...args: any[]) => any>(
+  callback: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  const timeoutRef = useRef<NodeJS.Timeout>();
+
+  return useCallback(
+    (...args: Parameters<T>) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => callback(...args), delay);
+    },
+    [callback, delay]
+  );
+}
+```
+
+---
+
+#### 3.2 批量更新Hook
+
+**创建文件**：`/src/hooks/useBatchUpdate.ts`
+
+```typescript
+import { useCallback, useRef, useEffect } from "react";
+
+export function useBatchUpdate<T>(
+  updateFn: (data: T) => void,
+  delay: number = 16
+) {
+  const pendingDataRef = useRef<T | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const batchUpdate = useCallback(
+    (data: T) => {
+      pendingDataRef.current = data;
+      
+      if (timeoutRef.current) {
+        return;
+      }
+
+      timeoutRef.current = setTimeout(() => {
+        if (pendingDataRef.current !== null) {
+          updateFn(pendingDataRef.current);
+          pendingDataRef.current = null;
+        }
+        timeoutRef.current = null;
+      }, delay);
+    },
+    [updateFn, delay]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      if (pendingDataRef.current !== null) {
+        updateFn(pendingDataRef.current);
+      }
+    };
+  }, [updateFn]);
+
+  return batchUpdate;
+}
+```
+
+---
+
+#### 3.3 虚拟列表组件
+
+**创建文件**：`/src/components/VirtualList.tsx`
+
+```typescript
+"use client";
+
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+} from "react";
+
+interface VirtualListProps<T> {
+  items: T[];
+  height: number;
+  itemHeight: number;
+  renderItem: (item: T, index: number) => React.ReactNode;
+  overscan?: number;
+  className?: string;
+}
+
+export const VirtualList = memo(<T,>({
+  items,
+  height,
+  itemHeight,
+  renderItem,
+  overscan = 5,
+  className = "",
+}: VirtualListProps<T>) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  const handleScroll = useCallback(() => {
+    if (containerRef.current) {
+      setScrollTop(containerRef.current.scrollTop);
+    }
+  }, []);
+
+  const totalHeight = useMemo(
+    () => items.length * itemHeight,
+    [items.length, itemHeight]
+  );
+
+  const visibleItems = useMemo(() => {
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+    const endIndex = Math.min(
+      items.length - 1,
+      Math.ceil((scrollTop + height) / itemHeight) + overscan
+    );
+
+    const visible = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      visible.push({
+        item: items[i],
+        index: i,
+        top: i * itemHeight,
+      });
+    }
+    return visible;
+  }, [items, scrollTop, itemHeight, height, overscan]);
+
+  return (
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className={`overflow-auto relative ${className}`}
+      style={{ height }}
+    >
+      <div style={{ height: totalHeight, position: "relative" }}>
+        {visibleItems.map(({ item, index, top }) => (
+          <div
+            key={index}
+            style={{
+              position: "absolute",
+              top,
+              left: 0,
+              right: 0,
+              height: itemHeight,
+            }}
+          >
+            {renderItem(item, index)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+VirtualList.displayName = "VirtualList";
+```
+
+---
+
+### 四、安装依赖
+
+**执行命令**：
+
+```powershell
+pnpm add zustand
+```
+
+---
+
+## 📁 重构后的目录结构
+
+```
+src/
+├── hooks/
+│   ├── useAIStream.ts          # 重构：批量更新 + zustand
+│   ├── use-ai-generation.ts    # 保持
+│   ├── useDebounce.ts          # 新增
+│   ├── useBatchUpdate.ts       # 新增
+│   └── useChatSession.ts
+├── stores/
+│   └── ai-stream-store.ts      # 新增：全局AI流状态
+├── components/
+│   ├── VirtualList.tsx         # 新增：虚拟列表
+│   ├── workspace/
+│   │   ├── NodePalette.tsx     # 新增：拆分组件
+│   │   └── node-components.tsx
+│   └── script-views/
+│       ├── ScriptEditor.tsx    # 优化
+│       └── ...
+└── app/
+    ├── workspace/
+    │   └── page.tsx            # 优化
+    └── scripts/
+        └── [id]/
+            └── page.tsx        # 优化：减少30+个 useState
+```
+
+---
+
+## 📋 优化规则总结
+
+### 禁止
+- ❌ 新增无依赖 useEffect
+- ❌ 在 render 期间创建函数
+- ❌ 深层 props 传递大对象
+- ❌ 任意使用 JSON.stringify 做依赖
+- ❌ 在组件内重复创建大数组
+
+### 必须
+- ✅ 所有 AI 流状态统一管理（Zustand）
+- ✅ 使用 useMemo / useCallback
+- ✅ 使用虚拟列表（长列表）
+- ✅ 大组件拆分
+- ✅ 页面级 Suspense
+- ✅ 所有长列表分页
+- ✅ 所有输入增加防抖
+- ✅ 所有流式状态增加中断恢复
+- ✅ 所有异步必须支持 AbortController
+- ✅ 状态批量更新（16ms/60fps）

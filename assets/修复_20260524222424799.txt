@@ -1,0 +1,147 @@
+我来检查当前的代码状态，找出字体仍然粗重的原因。
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\globals.css
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\components\script-views\ScriptEditor.tsx
+          
+我来检查当前的样式定义情况。
+
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: script-content|outline-content|font-body
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\globals.css
+          
+我发现了问题！样式定义正确，但可能被其他样式覆盖了。让我检查并修复优先级问题。
+
+## AI修复指令：确保字体样式优先级
+
+### 一、问题分析
+
+当前样式可能被 Tailwind CSS 默认样式覆盖。需要提高样式优先级。
+
+### 二、修复方案
+
+#### 2.1 修改全局样式 - 提高优先级
+
+**修改文件**：`/src/app/globals.css`
+
+```css
+/* === 剧本编辑器专用样式 === */
+.script-content,
+textarea.script-content {
+  font-family: var(--font-serif) !important;
+  font-weight: 300 !important;
+  font-size: 14px !important;
+  line-height: 1.7 !important;
+  letter-spacing: 0.005em !important;
+  color: var(--foreground) !important;
+}
+
+/* === 大纲/简介专用样式 === */
+.outline-content,
+textarea.outline-content {
+  font-family: var(--font-serif) !important;
+  font-weight: 300 !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  letter-spacing: 0.005em !important;
+  color: var(--on-surface-variant) !important;
+}
+```
+
+#### 2.2 确保组件正确应用类名
+
+**确认文件**：`/src/components/script-views/ScriptEditor.tsx`
+
+确保 textarea 使用正确的类名：
+
+```tsx
+<textarea
+  key={activeEpisode}
+  className="script-content w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
+  value={script?.episodeCount && script.episodeCount > 1 ? (episodeContentMap[activeEpisode] || '') : editContent}
+  onChange={(e) => {
+    if (script?.episodeCount && script.episodeCount > 1) {
+      handleEpisodeContentChange(activeEpisode, e.target.value);
+    } else {
+      setEditContent(e.target.value);
+    }
+  }}
+  placeholder={script?.episodeCount && script.episodeCount > 1 ? `第 ${activeEpisode} 集内容...` : "在此输入或粘贴剧本内容..."}
+/>
+```
+
+#### 2.3 确认大纲textarea使用正确类名
+
+**确认文件**：`/src/app/scripts/[id]/page.tsx`
+
+```tsx
+<textarea
+  className="outline-content w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
+  rows={3}
+  value={editSynopsis}
+  onChange={(e) => setEditSynopsis(e.target.value)}
+  placeholder="输入剧本简介，或点击提炼大纲自动分析..."
+/>
+```
+
+---
+
+### 三、字体规范确认
+
+| 场景 | 字体族 | 字重 | 字号 | 行高 |
+|------|--------|------|------|------|
+| **剧本编辑框** | Noto Serif SC | 300 (light) | 14px | 1.7 |
+| **大纲/简介框** | Noto Serif SC | 300 (light) | 13px | 1.6 |
+
+---
+
+### 四、禁止事项
+
+1. **禁止** 在组件中添加 `text-sm`、`font-medium` 等可能覆盖样式的类
+2. **禁止** 修改 `.script-content` 和 `.outline-content` 的字重设置
+3. **禁止** 删除 `!important` 声明（确保优先级）
+
+---
+
+### 五、验证清单
+
+| 检查项 | 通过标准 |
+|--------|---------|
+| 剧本编辑框 | 字体轻盈，字重约300，衬线字体 |
+| 大纲/简介框 | 字体轻盈，字重约300，衬线字体 |
+| 无粗体 | 无任何地方使用粗体 |
+| 统一风格 | 所有文本区域字体风格一致 |
+
+应用这些修改后，字体样式应该能够正确显示为轻盈的衬线字体。

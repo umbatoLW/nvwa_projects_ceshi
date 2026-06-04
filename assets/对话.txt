@@ -1,0 +1,286 @@
+# AI编程指令：NVWA项目代码优化
+
+## 📋 任务概述
+
+**目标**: 优化以下4个代码问题（不包含认证绕过问题）
+1. 过度使用 `any` 类型
+2. 生产代码调试日志未清理
+3. 大型单体文件难维护
+4. catch 块变量命名不一致
+
+**约束**: 不得修改任何业务逻辑，只进行重构和优化，确保现有功能完全不受影响。
+
+---
+
+## 🔧 任务1：类型安全优化
+
+### 问题描述
+[scripts/[id]/page.tsx](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx) 中存在多处 `any` 类型使用，违反 TypeScript `strict` 模式规范。
+
+### 受影响代码位置
+```typescript
+// 第352行附近
+const [editingItem, setEditingItem] = useState<{
+  type: 'costume' | 'scene' | 'prop';
+  episode: number;
+  index: number;
+  data: any;  // ❌ any类型
+} | null>(null);
+
+// 第355-365行附近
+const [costumeByEpisode, setCostumeByEpisode] = useState<Record<number, any[]>>({});
+const [sceneByEpisode, setSceneByEpisode] = useState<Record<number, any[]>>({});
+const [propsByEpisode, setPropsByEpisode] = useState<Record<number, any[]>>({});
+
+// 第388行附近
+const [streamingItems, setStreamingItems] = useState<any[]>([]);
+```
+
+### 优化要求
+
+**1.1 在文件顶部添加接口定义**
+
+在 `useState` 声明之前，添加以下接口定义：
+
+```typescript
+// === 提取项接口 ===
+interface ExtractedItem {
+  name: string;
+  character?: string;
+  style?: string;
+  details?: string;
+  imagePrompt?: string;
+}
+
+// === 编辑项接口 ===
+interface EditingItem {
+  type: 'costume' | 'scene' | 'prop';
+  episode: number;
+  index: number;
+  data: ExtractedItem;
+}
+
+// === 流式项接口 ===
+interface StreamingItem {
+  name?: string;
+  content?: string;
+  status?: 'pending' | 'streaming' | 'completed';
+}
+```
+
+**1.2 替换 `any` 类型**
+
+将以下类型声明：
+```typescript
+// 修改前
+data: any
+Record<number, any[]>
+any[]
+```
+
+替换为：
+```typescript
+// 修改后
+data: ExtractedItem
+Record<number, ExtractedItem[]>
+StreamingItem[]
+```
+
+**1.3 处理 `as any` 类型断言**
+
+在 [api/ai/extract-stream/route.ts](file:///d:/nvwa_projects/src/app/api/ai/extract-stream/route.ts#L101) 的第101行：
+
+```typescript
+// 修改前
+} as any;
+
+// 修改后
+} as { taskId: string; status: string; result?: unknown };
+```
+
+### 验证要求
+- 确保 TypeScript 编译无错误
+- 确保剧本编辑功能（服装/场景/道具提取）正常工作
+- 确保流式生成功能正常
+
+---
+
+## 🔧 任务2：调试日志清理
+
+### 问题描述
+多个文件中存在 `console.log`、`console.error`、`console.warn` 调试语句，生产环境应移除或替代。
+
+### 受影响文件及清理策略
+
+#### 2.1 [jimeng-adapter.ts](file:///d:/nvwa_projects/src/lib/jimeng-adapter.ts)
+
+**保留的日志**（仅保留 error 级别）：
+- 第158行 `console.error` - API 错误必须记录
+- 第232行 `console.error` - API 错误必须记录
+
+**移除的日志**（替换为条件日志函数）：
+- 第139行 `console.log('[Jimeng API] Response:...')` → 移除
+- 第312行 `console.log('[Jimeng] 收到 count 参数...')` → 移除
+- 第315行 `console.log('[Jimeng] 开始提交...')` → 移除
+- 第319行 `console.log('[Jimeng] 正在提交第...')` → 移除
+- 第331行 `console.warn('[Jimeng] 部分任务提交失败...')` → 保留（warn级别有意义）
+- 第391行 `console.log('[Jimeng Query] Response:...')` → 移除
+- 第494行 `console.log('[Jimeng Query] 任务状态...')` → 移除
+- 第496行 `console.log('[Jimeng Query] 第一张图片类型...')` → 移除
+
+#### 2.2 [create/image/page.tsx](file:///d:/nvwa_projects/src/app/create/image/page.tsx)
+
+**移除所有 `console.log`**：
+- 第317行 `console.log('历史记录已存在，跳过重复保存')` → 移除
+- 第644行 `console.log('Direct download failed...')` → 移除
+- 第921行 `console.log('[Image Generation] Model:...')` → 移除
+
+**保留 `console.error`**（错误必须记录）：
+- 第272行 `console.error('加载历史记录失败:', err)` → 保留
+- 第373行 `console.error('保存历史记录到数据库失败:', err)` → 保留
+- 第602行 `console.error('删除数据库记录失败')` → 保留
+- 第605行 `console.error('删除失败:', error)` → 保留
+- 第664行 `console.error('Download failed:', err)` → 保留
+- 第810行 `console.error('Task failed:', errorMsg)` → 保留
+- 第835行 `console.error('Poll error:', err)` → 保留
+- 第1037行 `console.error('Generate failed:', err)` → 保留
+
+**移除 `console.warn`**：
+- 第330行 `console.warn('localStorage存储失败，清理旧数据...')` → 移除
+- 第339行 `console.warn('localStorage已满，已清空历史记录')` → 移除
+
+#### 2.3 [api/ai/tasks/[id]/route.ts](file:///d:/nvwa_projects/src/app/api/ai/tasks/[id]/route.ts)
+
+**保留 `console.error`**：
+- 第28行 `console.error("[Upload] Invalid base64 format")` → 保留
+- 第52行 `console.error("[Upload] Failed to upload base64 image:", error)` → 保留
+
+**移除 `console.log`**：
+- 第49行 `console.log('[Upload] Uploaded base64 image to:...')` → 移除
+- 第87行 `console.log('[Task Query] 即梦任务查询...')` → 移除
+- 第91行 `console.log('[Task Query] 即梦查询结果...')` → 移除
+- 第96行 `console.log('[Task Query] 开始上传...')` → 移除
+- 第101行 `console.log('[Task Query] 上传第...')` → 移除
+- 第104行 `console.log('[Task Query] 第...张图片已是URL...')` → 移除
+
+### 验证要求
+- 确保图片生成功能正常工作
+- 确保即梦API调用正常
+- 确保错误日志在异常时仍能正确输出
+
+---
+
+## 🔧 任务3：大型单体文件拆分
+
+### 问题描述
+[scripts/[id]/page.tsx](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx) 文件超过2000行，包含过多功能模块，难以维护。
+
+### 拆分策略
+
+**不拆分文件，只提取组件**：考虑到文件引用关系复杂，为避免引入回归风险，仅将文件中定义的组件提取到同目录下的单独文件中。
+
+#### 3.1 创建组件文件
+
+在 `src/app/scripts/[id]/` 目录下创建以下文件：
+
+**3.1.1 `StoryboardCard.tsx`** - 分镜卡片组件
+
+提取条件：
+- 搜索 `function StoryboardCard`
+- 将其及相关类型定义 `ScriptStoryboard`, `StoryboardCardProps` 提取
+
+**3.1.2 `EpisodeSelector.tsx`** - 集数选择器组件
+
+提取条件：
+- 搜索 `EpisodeSelector` 或集数相关的 `useState` 和 UI
+
+#### 3.2 组件提取原则
+
+```typescript
+// 原文件保持导入
+import { StoryboardCard } from './StoryboardCard';
+import { EpisodeSelector } from './EpisodeSelector';
+```
+
+### 验证要求
+- 确保 `/scripts/[id]` 页面正常加载
+- 确保剧本详情页的 Tab 切换（剧本/分镜/角色）正常
+- 确保编辑、保存功能正常
+
+---
+
+## 🔧 任务4：错误处理命名规范
+
+### 问题描述
+项目中 `catch` 块变量命名不一致：有的用 `err`，有的用 `error`，有的用 `e`。
+
+### 统一规范
+
+**标准**：统一使用 `error` 作为 catch 块变量名（与 TypeScript 内置 `Error` 类型命名一致）
+
+### 需修改的文件及位置
+
+#### 4.1 [create/image/page.tsx](file:///d:/nvwa_projects/src/app/create/image/page.tsx)
+
+```typescript
+// 第328行
+// 修改前
+} catch (e) {
+
+// 修改后
+} catch (error) {
+```
+
+#### 4.2 其他文件中的 `catch (err)` 和 `catch (e)` 
+
+使用全局搜索找到所有不规范的 catch 块：
+
+```bash
+# 搜索模式
+grep -rn "catch (err)" src/
+grep -rn "catch (e)" src/
+```
+
+将所有非 `error` 的 catch 变量统一替换为 `error`。
+
+### 验证要求
+- 确保所有 catch 块仍正确捕获异常
+- 确保图片生成、删除等操作异常时仍能显示错误提示
+
+---
+
+## ✅ 验证清单
+
+完成所有优化后，必须验证以下功能正常：
+
+| 功能模块 | 验证操作 |
+|----------|----------|
+| 剧本列表 | 访问 `/scripts`，检查列表加载、新建、删除 |
+| 剧本详情 | 访问 `/scripts/[id]`，检查 Tab 切换、编辑、保存 |
+| 角色列表 | 访问 `/characters`，检查列表加载、新建、删除 |
+| 工作区 | 访问 `/workspace`，检查节点拖拽、连接、执行 |
+| 图片生成 | 访问 `/create/image`，检查生图功能 |
+| 仪表盘 | 访问 `/dashboard`，检查统计数据加载 |
+| 控制台 | 无 `console.log` 输出（error/warn 保留） |
+
+---
+
+## ⚠️ 禁止事项
+
+1. **禁止修改** `BYPASS_AUTH` 相关代码
+2. **禁止修改** 任何业务逻辑
+3. **禁止修改** API 接口的请求/响应格式
+4. **禁止删除** 任何有实际功能的 `console.error`（错误日志必须保留）
+5. **禁止** 改变文件间的导入导出关系
+6. **禁止** 修改 `useState`、`useEffect` 的业务逻辑
+
+---
+
+## 📝 输出要求
+
+完成修复后，输出：
+1. 每个任务修改的文件列表
+2. 修改的行数统计
+3. 验证结果（功能测试通过/失败）
+
+如有任何疑问或冲突，请先确认再执行。

@@ -1,0 +1,66 @@
+第一轮检测（架构层）
+
+一、前端风险
+
+1. React状态风暴
+
+检测结果：
+项目中存在大量：
+
+useState
+
+useEffect
+
+AI Stream Hook
+
+实时生成状态
+
+工作流节点状态
+
+风险：
+高并发情况下：
+
+页面重复渲染
+
+CPU暴涨
+
+浏览器内存泄漏
+
+页面越来越卡
+
+重点危险文件：
+
+useAIStream.ts
+
+use-ai-generation.ts
+
+ScriptEditor.tsx
+
+Workspace相关组件
+
+执行修复指令：
+你现在是React性能优化专家。
+
+禁止：
+- 新增无依赖useEffect
+- 在render期间创建函数
+- 深层props传递大对象
+- 任意使用JSON.stringify做依赖
+- 在组件内重复创建大数组
+
+必须：
+- 所有AI流状态统一管理
+- 使用useMemo/useCallback
+- 使用虚拟列表
+- 大组件拆分
+- 页面级Suspense
+- 所有长列表分页
+- 所有输入增加防抖
+- 所有流式状态增加中断恢复
+- 所有异步必须支持abortController
+
+输出：
+1. 重构后的目录结构
+2. 每个组件性能问题
+3. 修复代码
+4. 风险说明

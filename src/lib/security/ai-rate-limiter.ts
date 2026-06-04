@@ -2,20 +2,17 @@
  * AI接口限流器
  * 支持用户级和IP级双重限流
  * 
- * ⚠️ 生产环境注意事项：
- * 当前使用内存Map存储限流数据，存在以下限制：
- * 1. 多实例部署时限流数据不共享，可能导致限流不准确
- * 2. 服务重启时限流数据会丢失
- * 3. 无法支持分布式环境
+ * 双模式支持：
+ * - 内存模式：单实例开发环境，无需 Redis
+ * - Redis模式：生产环境多实例共享状态
  * 
- * 生产环境部署时，请切换到Redis存储：
- * - 设置环境变量 REDIS_URL=redis://your-redis-server:6379
- * - 使用 redis-queue.ts 中的 RedisStore 替代内存Map
- * - 参考 /src/lib/queue/redis-queue.ts 实现方案
+ * 自动切换：检测到 REDIS_URL 环境变量时启用 Redis 模式
  */
 
 import { NextRequest } from "next/server";
 import { logger } from "@/lib/logger";
+import { rateLimiter } from "@/lib/redis-rate-limiter";
+import { isRedisAvailable } from "@/lib/redis-client";
 
 // 限流类型
 export type RateLimitType = keyof typeof RATE_LIMITS;
@@ -76,9 +73,118 @@ function getUserId(request: NextRequest): string | null {
 }
 
 /**
- * 检查限流
+ * 检查限流（同步版本，内存模式）
  */
 export function checkRateLimit(
+  request: NextRequest,
+  endpoint: keyof typeof RATE_LIMITS
+): RateLimitResult {
+  // Redis 可用时，提示使用异步版本
+  if (isRedisAvailable()) {
+    logger.warn("[RateLimit] Redis 可用，建议使用 checkRateLimitAsync");
+  }
+  
+  return checkRateLimitMemory(request, endpoint);
+}
+
+/**
+ * 检查限流（异步版本，支持 Redis）
+ * 生产环境推荐使用此版本
+ */
+export async function checkRateLimitAsync(
+  request: NextRequest,
+  endpoint: keyof typeof RATE_LIMITS
+): Promise<RateLimitResult> {
+  const config = RATE_LIMITS[endpoint];
+  if (!config) {
+    return { allowed: true };
+  }
+
+  const clientIp = getClientIp(request);
+  const userId = getUserId(request);
+
+  // Redis 可用时，使用 Redis 限流
+  if (isRedisAvailable()) {
+    return checkRateLimitRedis(clientIp, userId, endpoint, config);
+  }
+
+  // 降级为内存限流
+  return checkRateLimitMemory(request, endpoint);
+}
+
+/**
+ * Redis 限流检查
+ */
+async function checkRateLimitRedis(
+  clientIp: string,
+  userId: string | null,
+  endpoint: string,
+  config: { userLimit: number; ipLimit: number; windowMs: number }
+): Promise<RateLimitResult> {
+  // 1. IP 级限流
+  const ipKey = `ip:${clientIp}:${endpoint}`;
+  const ipResult = await rateLimiter.checkLimit(ipKey, {
+    limit: config.ipLimit,
+    windowMs: config.windowMs,
+  });
+
+  if (!ipResult.allowed) {
+    logger.warn(`[RateLimit:Redis] IP ${clientIp} exceeded limit for ${endpoint}`);
+    return {
+      allowed: false,
+      reason: `IP请求过于频繁，请${Math.ceil((ipResult.resetTime - Date.now()) / 1000)}秒后重试`,
+      headers: buildHeaders(config.ipLimit, ipResult),
+    };
+  }
+
+  // 2. 用户级限流
+  if (userId) {
+    const userKey = `user:${userId}:${endpoint}`;
+    const userResult = await rateLimiter.checkLimit(userKey, {
+      limit: config.userLimit,
+      windowMs: config.windowMs,
+    });
+
+    if (!userResult.allowed) {
+      logger.warn(`[RateLimit:Redis] User ${userId} exceeded limit for ${endpoint}`);
+      return {
+        allowed: false,
+        reason: `请求过于频繁，请${Math.ceil((userResult.resetTime - Date.now()) / 1000)}秒后重试`,
+        headers: buildHeaders(config.userLimit, userResult),
+      };
+    }
+
+    return {
+      allowed: true,
+      headers: buildHeaders(config.userLimit, userResult),
+    };
+  }
+
+  return {
+    allowed: true,
+    headers: buildHeaders(config.ipLimit, ipResult),
+  };
+}
+
+/**
+ * 构建响应头
+ */
+function buildHeaders(
+  limit: number,
+  result: { remaining: number; resetTime: number }
+): Record<string, string> {
+  return {
+    "X-RateLimit-Limit": String(limit),
+    "X-RateLimit-Remaining": String(result.remaining),
+    "X-RateLimit-Reset": String(result.resetTime),
+    "Retry-After": String(Math.max(0, Math.ceil((result.resetTime - Date.now()) / 1000))),
+  };
+}
+
+/**
+ * 内存限流检查（原有逻辑）
+ */
+function checkRateLimitMemory(
   request: NextRequest,
   endpoint: keyof typeof RATE_LIMITS
 ): RateLimitResult {

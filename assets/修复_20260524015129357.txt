@@ -1,0 +1,418 @@
+## AI修复指令：剧本库功能全面完善
+
+### 文件范围
+- **修改文件**：`/src/app/scripts/page.tsx`、`/src/app/scripts/[id]/page.tsx`
+
+---
+
+## 第一部分：Bug修复（必须执行，不影响现有逻辑）
+
+### 1.1 剧本库列表页分页问题
+**位置**：`/src/app/scripts/page.tsx`
+
+**现状**：
+```tsx
+{[1, 2, 3].map((p) => (  // 硬编码页码
+  <button key={p} ...>{p}</button>
+))}
+```
+
+**修复方案**：暂时删除分页组件，保留刷新功能
+
+```tsx
+{/* 暂时移除假分页，保留刷新列表功能 */}
+<div className="flex items-center justify-center mt-4">
+  <button 
+    onClick={() => loadScripts()}
+    className="text-sm text-[#0ABAB5] hover:underline"
+  >
+    刷新列表
+  </button>
+</div>
+```
+
+---
+
+### 1.2 状态筛选不匹配问题
+**位置**：`/src/app/scripts/page.tsx`
+
+**现状**：
+```tsx
+const statusOptions = ['全部', '草稿', '审核中', '已完成'];
+// 筛选时可能不匹配，因为 API 可能返回 'draft'、'completed'
+```
+
+**修复方案**：添加状态映射
+
+```tsx
+// 在组件顶部添加
+const statusMapping: Record<string, string> = {
+  'draft': '草稿',
+  'completed': '已完成',
+  '审核中': '审核中', 
+  '草稿': '草稿',
+  '已完成': '已完成',
+};
+
+// 修改筛选逻辑
+const filtered = scripts.filter((s) => {
+  const q = search.toLowerCase();
+  const matchSearch = s.title.toLowerCase().includes(q) || (s.genre && s.genre.toLowerCase().includes(q));
+  const matchGenre = genreFilter === '全部' || s.genre === genreFilter;
+  
+  // 修复状态筛选
+  const normalizedStatus = statusMapping[s.status] || s.status;
+  const matchStatus = statusFilter === '全部' || normalizedStatus === statusFilter;
+  
+  return matchSearch && matchGenre && matchStatus;
+});
+```
+
+---
+
+## 第二部分：新增功能：剧本集数预览模块
+
+### 2.1 功能说明
+在剧本编辑视图中，将单一文本框改为集数标签页结构：
+- 自动根据 `script.episodeCount` 生成集数标签
+- 点击标签切换显示对应集数内容
+- 编辑单集内容后同步到总剧本
+
+### 2.2 新增状态
+**位置**：`/src/app/scripts/[id]/page.tsx` 状态声明区域
+
+```tsx
+// 集数内容分片状态
+const [episodeContentMap, setEpisodeContentMap] = useState<Record<number, string>>({});
+const [activeEpisode, setActiveEpisode] = useState<number>(1);
+```
+
+### 2.3 新增函数
+**位置**：`/src/app/scripts/[id]/page.tsx` 函数区域
+
+```tsx
+// 根据总内容自动分片
+const autoSplitContent = useCallback(() => {
+  if (!editContent || !script?.episodeCount) return;
+  
+  const totalEpisodes = script.episodeCount;
+  const lines = editContent.split('\n');
+  const totalLines = lines.length;
+  const linesPerEpisode = Math.ceil(totalLines / totalEpisodes);
+  
+  const map: Record<number, string> = {};
+  for (let i = 0; i < totalEpisodes; i++) {
+    const startLine = i * linesPerEpisode;
+    const endLine = Math.min((i + 1) * linesPerEpisode, totalLines);
+    map[i + 1] = lines.slice(startLine, endLine).join('\n');
+  }
+  setEpisodeContentMap(map);
+}, [editContent, script?.episodeCount]);
+
+// 内容变化时自动重新分片
+useEffect(() => {
+  if (editContent && script?.episodeCount) {
+    autoSplitContent();
+  }
+}, [editContent, script?.episodeCount, autoSplitContent]);
+
+// 单集内容更新
+const handleEpisodeContentChange = (episode: number, content: string) => {
+  setEpisodeContentMap(prev => ({ ...prev, [episode]: content }));
+  // 重新组装总内容
+  const allContent = Object.entries(episodeContentMap)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([, c]) => c)
+    .join('\n\n');
+  setEditContent(allContent);
+};
+```
+
+### 2.4 替换剧本编辑视图
+**位置**：`/src/app/scripts/[id]/page.tsx` 中 `activeView === "script"` 部分
+
+```tsx
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-lg font-semibold">剧本编辑</h2>
+      <div className="flex items-center gap-2 text-xs text-[#888888]">
+        <span>共 {script?.episodeCount || 1} 集</span>
+        {script?.episodeCount && script.episodeCount > 1 && (
+          <>
+            <span className="text-[#0ABAB5]">|</span>
+            <span>当前第 {activeEpisode} 集</span>
+          </>
+        )}
+      </div>
+    </div>
+    
+    {/* 集数标签栏 - 仅多集时显示 */}
+    {script?.episodeCount && script.episodeCount > 1 && (
+      <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-[#333]">
+        {Array.from({ length: script.episodeCount }, (_, i) => i + 1).map(ep => (
+          <button
+            key={ep}
+            onClick={() => setActiveEpisode(ep)}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              activeEpisode === ep 
+                ? 'bg-[#0ABAB5] text-black' 
+                : 'bg-[#1A1A1A] text-[#888888] hover:text-[#F5F5F5]'
+            }`}
+          >
+            第{ep}集
+          </button>
+        ))}
+      </div>
+    )}
+    
+    {/* 单集内容编辑器 */}
+    <textarea
+      key={activeEpisode}  // 切换时重置状态
+      className="flex-1 w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-sm text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none font-mono leading-relaxed"
+      value={episodeContentMap[activeEpisode] || ''}
+      onChange={(e) => handleEpisodeContentChange(activeEpisode, e.target.value)}
+      placeholder={`第 ${activeEpisode} 集内容...`}
+    />
+    
+    {/* 提示信息 */}
+    {script?.episodeCount && script.episodeCount > 1 && (
+      <p className="text-xs text-[#888888] mt-2">
+        编辑单集内容会自动保存到总剧本。集数标签栏帮助快速切换。
+      </p>
+    )}
+  </div>
+)}
+```
+
+---
+
+## 第三部分：AI优化功能改进
+
+### 3.1 新增状态
+**位置**：`/src/app/scripts/[id]/page.tsx` 状态声明区域
+
+```tsx
+// AI优化相关状态
+const [optimizingMode, setOptimizingMode] = useState<'polish' | 'character' | 'visual' | 'rhythm'>('polish');
+const [optimizedStreamText, setOptimizedStreamText] = useState('');
+const [isOptimizingStream, setIsOptimizingStream] = useState(false);
+```
+
+### 3.2 新增流式优化函数
+**位置**：`/src/app/scripts/[id]/page.tsx` 函数区域
+
+```tsx
+// 流式优化函数
+const handleStreamOptimize = async () => {
+  if (!editContent.trim()) {
+    toast.error('请先输入剧本内容');
+    return;
+  }
+
+  setIsOptimizingStream(true);
+  setOptimizedStreamText('');
+
+  try {
+    const res = await fetch('/api/ai/optimize-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: editContent,
+        mode: optimizingMode,
+        focus: ['dialogue', 'rhythm'],
+      }),
+    });
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('无法读取响应');
+
+    const decoder = new TextDecoder();
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value);
+      const lines = text.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            
+            if (data.type === 'text') {
+              fullText += data.content;
+              setOptimizedStreamText(fullText);
+            } else if (data.type === 'complete') {
+              toast.success('优化完成');
+            } else if (data.type === 'error') {
+              toast.error(data.message);
+            }
+          } catch {
+            // 忽略解析错误
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('优化失败:', error);
+    toast.error('优化失败');
+  } finally {
+    setIsOptimizingStream(false);
+  }
+};
+```
+
+### 3.3 替换优化视图
+**位置**：`/src/app/scripts/[id]/page.tsx` 中 `activeView === "optimize"` 部分
+
+```tsx
+{activeView === "optimize" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-lg font-semibold">AI 优化</h2>
+      <Button 
+        onClick={handleStreamOptimize} 
+        disabled={isOptimizingStream}
+      >
+        {isOptimizingStream ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            优化中...
+          </>
+        ) : (
+          <>
+            <Sparkles className="w-4 h-4 mr-2" />
+            开始优化
+          </>
+        )}
+      </Button>
+    </div>
+    
+    {/* 优化模式选择 */}
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <button 
+        onClick={() => setOptimizingMode('polish')}
+        className={`p-4 rounded-xl border text-left transition-colors ${
+          optimizingMode === 'polish' 
+            ? 'bg-[#0ABAB5]/10 border-[#0ABAB5]' 
+            : 'bg-[#1A1A1A] border-[#333] hover:border-[#0ABAB5]'
+        }`}
+      >
+        <Sparkles className="w-5 h-5 text-[#0ABAB5] mb-2" />
+        <h3 className="font-medium">整体润色</h3>
+        <p className="text-xs text-[#888888]">优化语言和节奏</p>
+      </button>
+      
+      <button 
+        onClick={() => setOptimizingMode('character')}
+        className={`p-4 rounded-xl border text-left transition-colors ${
+          optimizingMode === 'character' 
+            ? 'bg-[#0ABAB5]/10 border-[#0ABAB5]' 
+            : 'bg-[#1A1A1A] border-[#333] hover:border-[#0ABAB5]'
+        }`}
+      >
+        <Users className="w-5 h-5 text-[#0ABAB5] mb-2" />
+        <h3 className="font-medium">人物增强</h3>
+        <p className="text-xs text-[#888888]">完善人设和对话</p>
+      </button>
+      
+      <button 
+        onClick={() => setOptimizingMode('visual')}
+        className={`p-4 rounded-xl border text-left transition-colors ${
+          optimizingMode === 'visual' 
+            ? 'bg-[#0ABAB5]/10 border-[#0ABAB5]' 
+            : 'bg-[#1A1A1A] border-[#333] hover:border-[#0ABAB5]'
+        }`}
+      >
+        <Film className="w-5 h-5 text-[#0ABAB5] mb-2" />
+        <h3 className="font-medium">画面感强化</h3>
+        <p className="text-xs text-[#888888]">添加场景描写</p>
+      </button>
+      
+      <button 
+        onClick={() => setOptimizingMode('rhythm')}
+        className={`p-4 rounded-xl border text-left transition-colors ${
+          optimizingMode === 'rhythm' 
+            ? 'bg-[#0ABAB5]/10 border-[#0ABAB5]' 
+            : 'bg-[#1A1A1A] border-[#333] hover:border-[#0ABAB5]'
+        }`}
+      >
+        <Zap className="w-5 h-5 text-[#0ABAB5] mb-2" />
+        <h3 className="font-medium">节奏调整</h3>
+        <p className="text-xs text-[#888888]">控制剧情快慢</p>
+      </button>
+    </div>
+    
+    {/* 双栏对比视图 */}
+    <div className="flex gap-4 flex-1 min-h-0">
+      {/* 原文 */}
+      <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#333]">
+        <div className="px-4 py-2 bg-[#141414] border-b border-[#333] text-sm text-[#888888]">原文</div>
+        <ScrollArea className="flex-1 p-4">
+          <pre className="text-sm text-foreground whitespace-pre-wrap">{editContent || '暂无内容'}</pre>
+        </ScrollArea>
+      </div>
+      
+      {/* 优化结果 */}
+      <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#0ABAB5]/50">
+        <div className="px-4 py-2 bg-[#0ABAB5]/10 border-b border-[#0ABAB5]/30 flex items-center justify-between">
+          <span className="text-sm text-[#0ABAB5] font-medium">优化结果</span>
+          {optimizedStreamText && (
+            <Button size="sm" onClick={() => {
+              setEditContent(optimizedStreamText);
+              toast.success('已应用到剧本');
+            }}>
+              应用到剧本
+            </Button>
+          )}
+        </div>
+        <ScrollArea className="flex-1 p-4">
+          {isOptimizingStream ? (
+            <div className="text-sm text-foreground whitespace-pre-wrap">
+              {optimizedStreamText || '正在优化中...'}
+              <span className="animate-pulse">|</span>
+            </div>
+          ) : optimizedStreamText ? (
+            <pre className="text-sm text-foreground whitespace-pre-wrap">{optimizedStreamText}</pre>
+          ) : (
+            <div className="text-center text-[#888888] py-8">
+              <p>点击「开始优化」按钮生成优化内容</p>
+            </div>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  </div>
+)}
+```
+
+---
+
+## 第四部分：现有代码保护规则
+
+1. **不修改** `AppShell` 组件及其样式
+2. **不修改** `StoryboardCard` 组件的核心逻辑
+3. **不修改** 服装/场景/道具的流式生成逻辑
+4. **不修改** `useAIStream` hook
+5. **不修改** API 调用函数（`apiFetch`）
+6. **保留** 所有 `toast` 提示
+7. **保留** 移动端适配逻辑（`showMobilePanel` 等）
+8. **保留** 其他视图（分镜、角色、服装、场景、道具等）的原有功能
+
+---
+
+## 第五部分：测试清单
+
+- [ ] 剧本库列表状态筛选正常工作
+- [ ] 上传剧本后自动识别集数
+- [ ] 集数 > 1 时显示标签栏
+- [ ] 点击标签切换集数
+- [ ] 编辑单集内容后总剧本内容同步
+- [ ] AI优化模式选择正常工作
+- [ ] AI优化流式生成正常显示
+- [ ] AI优化双栏对比正常工作
+- [ ] 服装/场景/道具功能无回归
+- [ ] 移动端布局正常

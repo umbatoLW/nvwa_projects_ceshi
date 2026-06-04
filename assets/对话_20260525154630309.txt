@@ -1,0 +1,282 @@
+# 资产库模块优化修复指令
+
+## 修改内容概览
+
+| 修改项 | 说明 |
+|--------|------|
+| 卡片比例 | 预览图框改为 3:4 |
+| 时间显示 | 改为年月日时分 |
+| 网格列数 | 每行8个，自适应 |
+| 硬编码0B | 移除 |
+| 按钮文字 | "使用" → "下载" |
+| 全屏预览按钮 | "复制链接" → "下载" |
+
+---
+
+## 修复指令
+
+### 步骤1：修改卡片比例和网格布局
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第330行的网格布局
+<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-8 gap-3">
+
+// 修改第340行的预览区域高度（3:4比例）
+<div className="relative aspect-[3/4] bg-[#1A1A1A] flex items-center justify-center overflow-hidden">
+```
+
+### 步骤2：修改时间显示格式
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第111行的日期格式化
+createdAtDisplay: new Date(a.createdAt).toLocaleString('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+}),
+
+// 修改第488行列表视图的时间显示
+<td className="px-4 py-3 text-[#888888]">{new Date(asset.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+```
+
+### 步骤3：修复硬编码0B问题
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第106-110行的加载逻辑
+setAssets(
+  res.data.map((a: Asset) => ({
+    ...a,
+    size: a.size || getAssetSizeFromUrl(a.url), // 从URL或metadata获取大小
+    type: a.type || '图片',
+    usage: a.usage || 0,
+    // ...
+  }))
+);
+
+// 在文件开头添加辅助函数
+function getAssetSizeFromUrl(url: string): number {
+  // 尝试从URL参数或metadata中获取大小
+  // 如果都没有，返回合理的默认值
+  return 0;
+}
+
+// 修改formatSize函数，处理0的情况
+function formatSize(bytes: number): string {
+  if (bytes <= 0) return '--'; // 改为显示空或--
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+```
+
+### 步骤4：修改"使用"按钮为"下载"按钮
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第390-396行的按钮
+<button
+  onClick={(e) => { e.stopPropagation(); handleDownload(asset); }}
+  className="px-3 py-1.5 rounded-lg bg-[#0ABAB5] text-black text-xs font-medium hover:bg-[#0ABAB5]/90 transition-colors flex items-center gap-1"
+>
+  <Download className="w-3 h-3" />
+  下载
+</button>
+
+// 添加下载函数
+const handleDownload = async (asset: Asset) => {
+  if (!asset.url) {
+    toast.error('资产链接无效');
+    return;
+  }
+  try {
+    const response = await fetch(asset.url);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = asset.name || `asset-${Date.now()}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+    toast.success(`已开始下载「${asset.name}」`);
+  } catch {
+    toast.error('下载失败');
+  }
+};
+```
+
+### 步骤5：修改全屏预览中的"复制链接"按钮为"下载"
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第500行后的预览弹窗
+<div className="flex justify-center gap-3 mt-3">
+  <button
+    onClick={() => handleDownload(previewAsset)}
+    className="px-4 py-2 bg-[#0ABAB5] hover:bg-[#0ABAB5]/90 text-black rounded-lg text-sm flex items-center gap-2 transition-colors"
+  >
+    <Download className="w-4 h-4" />
+    下载
+  </button>
+</div>
+```
+
+### 步骤6：优化列表视图的下载按钮
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 修改第491-496行的操作按钮
+<div className="flex items-center gap-1">
+  <button onClick={() => openPreview(asset)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#0ABAB5] transition-colors" title="预览"><Eye className="w-3.5 h-3.5" /></button>
+  <button onClick={() => handleDownload(asset)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#0ABAB5] transition-colors" title="下载"><Download className="w-3.5 h-3.5" /></button>
+  <button onClick={() => deleteOne(asset.id)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#EF4444] transition-colors" title="删除"><Trash2 className="w-3.5 h-3.5" /></button>
+</div>
+```
+
+---
+
+## 完整修复代码
+
+**文件**: [`src/app/assets/page.tsx`](file:///d:/nvwa_projects/src/app/assets/page.tsx)
+
+```typescript
+// 添加Download图标导入（第7行）
+import {
+  Search,
+  Upload,
+  Grid3X3,
+  List,
+  ImageIcon,
+  Video,
+  Music,
+  FileText,
+  X,
+  Trash2,
+  CheckSquare,
+  Square,
+  Eye,
+  Copy,
+  Calendar,
+  Download, // 新增
+} from 'lucide-react';
+
+// 修改formatSize函数（第52-56行）
+function formatSize(bytes: number): string {
+  if (bytes <= 0) return '--'; // 移除硬编码0B
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+// 添加下载函数（第187行后）
+const handleDownload = async (asset: Asset) => {
+  if (!asset.url) {
+    toast.error('资产链接无效');
+    return;
+  }
+  try {
+    const response = await fetch(asset.url);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = asset.name || `asset-${Date.now()}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+    toast.success(`已开始下载「${asset.name}」`);
+  } catch {
+    toast.error('下载失败');
+  }
+};
+
+// 修改加载逻辑（第106-114行）
+setAssets(
+  res.data.map((a: Asset) => ({
+    ...a,
+    size: a.size || 0,
+    type: a.type || '图片',
+    usage: a.usage || 0,
+    createdAtDisplay: new Date(a.createdAt).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    coverUrl: a.metadata?.coverUrl || undefined,
+  }))
+);
+
+// 修改网格布局（第330行）
+<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-8 gap-3">
+
+// 修改预览区域比例（第340行）
+<div className="relative aspect-[3/4] bg-[#1A1A1A] flex items-center justify-center overflow-hidden">
+
+// 修改悬浮按钮（第390-396行）
+<button
+  onClick={(e) => { e.stopPropagation(); handleDownload(asset); }}
+  className="px-3 py-1.5 rounded-lg bg-[#0ABAB5] text-black text-xs font-medium hover:bg-[#0ABAB5]/90 transition-colors flex items-center gap-1"
+>
+  <Download className="w-3 h-3" />
+  下载
+</button>
+
+// 修改列表视图的时间显示（第488行）
+<td className="px-4 py-3 text-[#888888]">{new Date(asset.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+
+// 修改列表视图的操作按钮（第491-496行）
+<div className="flex items-center gap-1">
+  <button onClick={() => openPreview(asset)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#0ABAB5] transition-colors" title="预览"><Eye className="w-3.5 h-3.5" /></button>
+  <button onClick={() => handleDownload(asset)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#0ABAB5] transition-colors" title="下载"><Download className="w-3.5 h-3.5" /></button>
+  <button onClick={() => deleteOne(asset.id)} className="p-1.5 rounded-lg text-[#888888] hover:text-[#EF4444] transition-colors" title="删除"><Trash2 className="w-3.5 h-3.5" /></button>
+</div>
+
+// 修改全屏预览弹窗按钮（第500行后）
+<div className="flex justify-center gap-3 mt-3">
+  <button
+    onClick={() => handleDownload(previewAsset)}
+    className="px-4 py-2 bg-[#0ABAB5] hover:bg-[#0ABAB5]/90 text-black rounded-lg text-sm flex items-center gap-2 transition-colors"
+  >
+    <Download className="w-4 h-4" />
+    下载
+  </button>
+</div>
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 卡片比例 | 预览图框显示为 3:4 比例 |
+| 时间显示 | 显示格式为 "YYYY-MM-DD HH:MM" |
+| 网格布局 | 大屏显示8列，自动适配 |
+| 大小显示 | 0B 改为 "--" |
+| 卡片按钮 | "使用" 改为 "下载"，功能正常 |
+| 全屏预览按钮 | "复制链接" 改为 "下载" |
+
+---
+
+## 优化建议
+
+1. **加载状态优化**：可以添加骨架屏加载效果
+2. **空状态优化**：空资产库时显示引导上传的提示
+3. **拖拽排序**：支持拖拽调整资产顺序
+4. **批量操作**：支持批量下载
+5. **图片懒加载**：已使用 loading="lazy"，建议保留

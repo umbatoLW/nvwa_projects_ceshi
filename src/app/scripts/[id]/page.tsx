@@ -2,7 +2,7 @@
 import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAIStream } from "@/hooks/useAIStream";
 import { StoryboardCard, ScriptStoryboard } from "@/components/StoryboardCard";
 import { ScriptChatPanel } from "@/components/script-chat/ScriptChatPanel";
+// P2-8 前端适配组件
+import {
+  ThreeStageProgress,
+  FiveDimensionScoreCard,
+  ScriptContentRenderer,
+} from "@/components/script-generation";
 // 拆分后的子组件
 import {
   ScriptEditor,
@@ -133,16 +139,7 @@ export default function ScriptDetailPage() {
   const id = params.id as string;
   
   // 从 URL 参数读取视图状态，刷新后保持当前视图
-  const [activeView, setActiveView] = useState<ViewType>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const savedView = params.get('view') as ViewType;
-      if (savedView && ['script', 'storyboard', 'roles', 'optimize', 'costumes', 'scenes', 'props', 'redline', 'chat'].includes(savedView)) {
-        return savedView;
-      }
-    }
-    return "script";
-  });
+  const [activeView, setActiveView] = useState<ViewType>("script");
   const [showDelete, setShowDelete] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [script, setScript] = useState<ScriptDetail | null>(null);
@@ -150,6 +147,8 @@ export default function ScriptDetailPage() {
   const [editTitle, setEditTitle] = useState("");
   const [editSynopsis, setEditSynopsis] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [aiGeneratedContent, setAiGeneratedContent] = useState("");
+  const [contentVersion, setContentVersion] = useState<'manual' | 'ai'>('manual');
   const [isSaving, setIsSaving] = useState(false);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -193,14 +192,29 @@ export default function ScriptDetailPage() {
   const [showPropEpisodes, setShowPropEpisodes] = useState(false);
   const [costumeEpisodes, setCostumeEpisodes] = useState<number[]>([]);
   
+  // 实时统计信息（基于当前编辑内容）
+  const liveStats = useMemo(() => {
+    const currentContent = contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent;
+    if (!currentContent) return { wordCount: 0, sceneCount: 0 };
+    const wordCount = currentContent.replace(/\s/g, '').length;
+    const sceneMatches = currentContent.match(/场景|第[一二三四五六七八九十\d]+场|内景|外景|INT\.?|EXT\.?/gi);
+    const sceneCount = sceneMatches ? new Set(sceneMatches).size : 0;
+    return { wordCount, sceneCount };
+  }, [editContent, aiGeneratedContent, contentVersion]);
+
+  // 从 URL 参数初始化视图状态（支持分享链接）
+  useEffect(() => {
+    const viewFromUrl = searchParams.get('view') as ViewType;
+    if (viewFromUrl && ['script', 'storyboard', 'roles', 'optimize', 'costumes', 'scenes', 'props', 'redline', 'chat'].includes(viewFromUrl)) {
+      setActiveView(viewFromUrl);
+    }
+  }, [searchParams]);
+
   // 监听视图变化，更新 URL 参数（刷新后保持当前视图）
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      const newUrl = `${path}?view=${activeView}`;
-      window.history.replaceState({}, '', newUrl);
-    }
-  }, [activeView]);
+    const newUrl = `${window.location.pathname}?view=${activeView}`;
+    router.replace(newUrl, { scroll: false });
+  }, [activeView, router]);
 
   // 当 activeView 切换时，自动检查已有数据并显示
   useEffect(() => {
@@ -237,6 +251,16 @@ export default function ScriptDetailPage() {
   const [scriptIdea, setScriptIdea] = useState('');
   const [targetEpisodes, setTargetEpisodes] = useState(24);
   const [generatedOutline, setGeneratedOutline] = useState<Record<string, unknown> | null>(null);
+  
+  // P2-8: 三阶段进度状态
+  const [generationStage, setGenerationStage] = useState<{ id: number; name: string; status: string }>({ id: 1, name: '核心对话生成', status: 'waiting' });
+  const [stageOutputs, setStageOutputs] = useState<Record<number, string>>({});
+  const [showProgressPanel, setShowProgressPanel] = useState(false);
+  const [generationResult, setGenerationResult] = useState<unknown | null>(null);
+  
+  // 用于传递给 ScriptEditor 的三阶段进度状态
+  const [stageProgress, setStageProgress] = useState<{ stage: number; name: string; output: string; detail?: string } | null>(null);
+  const stageProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 批量提取状态
   const [isBatchExtracting, setIsBatchExtracting] = useState(false);
@@ -603,6 +627,15 @@ export default function ScriptDetailPage() {
 
   const splitStream = useAIStream();
 
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (stageProgressTimerRef.current) {
+        clearTimeout(stageProgressTimerRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
@@ -891,7 +924,8 @@ export default function ScriptDetailPage() {
 
     setIsGeneratingScript(true);
     setGeneratedOutline(null);
-    setEditContent('');
+    setAiGeneratedContent('');
+    setContentVersion('ai');
 
     try {
       const res = await fetch('/api/ai/generate-full-script', {
@@ -923,26 +957,57 @@ export default function ScriptDetailPage() {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.type === 'progress') {
+              if (data.type === 'stage') {
+                // 三阶段进度：更新当前阶段
+                setStageProgress({
+                  stage: data.stage as number,
+                  name: data.name || `阶段 ${data.stage}`,
+                  output: data.output || '',
+                  detail: data.detail,
+                });
+              } else if (data.type === 'progress') {
                 if (data.content) {
                   fullScript += data.content;
-                  setEditContent(fullScript);
+                  setAiGeneratedContent(fullScript);
                 }
                 if (data.message) {
                   setAnalyzeProgress(data.message);
                 }
-                if (data.data && data.stage === 'outline_complete') {
+                if (data.stage === 'outline_complete' && data.data) {
                   setGeneratedOutline(data.data);
                 }
               } else if (data.type === 'complete') {
                 if (data.data?.script) {
-                  setEditContent(data.data.script);
+                  setAiGeneratedContent(data.data.script);
+                  const newEpisodeCount = data.data.generatedEpisodes;
+                  const newTitle = data.data.title;
                   setScript((prev) => prev ? {
                     ...prev,
-                    episodeCount: data.data.generatedEpisodes,
-                    title: data.data.title || prev.title,
+                    episodeCount: newEpisodeCount,
+                    title: newTitle || prev.title,
                   } : prev);
+                  
+                  // 自动保存到数据库
+                  try {
+                    await apiFetch(`/api/scripts/${id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        title: newTitle || script?.title,
+                        content: data.data.script,
+                        episodeCount: newEpisodeCount,
+                        genre: script?.genre,
+                        status: 'draft',
+                      }),
+                    });
+                    toast.success('剧本已自动保存');
+                  } catch (saveError) {
+                    console.error('自动保存失败:', saveError);
+                    toast.error('剧本保存失败，请手动保存');
+                  }
                 }
+                // 三阶段进度：标记所有阶段完成（stage=3 表示第三阶段已完成）
+                setStageProgress({ stage: 3, name: '完成', output: '剧本生成完成' });
                 toast.success('剧本生成完成');
               } else if (data.type === 'error') {
                 toast.error(data.message);
@@ -959,6 +1024,14 @@ export default function ScriptDetailPage() {
     } finally {
       setIsGeneratingScript(false);
       setAnalyzeProgress('');
+      // 三阶段进度：3秒后重置进度显示
+      if (stageProgressTimerRef.current) {
+        clearTimeout(stageProgressTimerRef.current);
+      }
+      stageProgressTimerRef.current = setTimeout(() => {
+        setStageProgress(null);
+        stageProgressTimerRef.current = null;
+      }, 3000);
     }
   };
 
@@ -2305,8 +2378,8 @@ export default function ScriptDetailPage() {
                 )}
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2">
-                <span>字数: {script.wordCount || 0}</span>
-                <span>场景: {script.sceneCount || 0}</span>
+                <span>字数: {liveStats.wordCount || 0}</span>
+                <span>场景: {liveStats.sceneCount || 0}</span>
                 <div className="flex items-center gap-1">
                   <span>集数:</span>
                   <input
@@ -2366,7 +2439,7 @@ export default function ScriptDetailPage() {
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "script" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
                     >
                       <FileText className="w-4 h-4 text-[#0ABAB5]" />
-                      <span>剧本预览</span>
+                      <span>剧本编辑</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("storyboard"); setShowMobilePanel(false); }}
@@ -2431,11 +2504,35 @@ export default function ScriptDetailPage() {
             {activeView === "chat" && (
               <ScriptChatPanel 
                 scriptId={id}
-                onApplyToScript={(content) => {
-                  setEditContent(content);
+                onApplyToScript={async (content) => {
+                  setAiGeneratedContent(content);
+                  setContentVersion('ai');
                   setActiveView("script");
-                  toast.success("已应用到剧本");
+                  // 自动保存AI生成内容
+                  try {
+                    await apiFetch(`/api/scripts/${id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        title: script?.title,
+                        content: content,
+                        episodeCount: script?.episodeCount,
+                        genre: script?.genre,
+                        status: 'draft',
+                      }),
+                    });
+                    toast.success("已应用到AI版本并自动保存");
+                  } catch {
+                    toast.success("已应用到AI版本，请手动保存");
+                  }
                 }}
+                scriptIdea={scriptIdea}
+                setScriptIdea={setScriptIdea}
+                targetEpisodes={targetEpisodes}
+                setTargetEpisodes={setTargetEpisodes}
+                onGenerateFullScript={handleGenerateFullScript}
+                isGeneratingScript={isGeneratingScript}
+                stageProgress={stageProgress ? { currentStage: stageProgress.stage, isComplete: stageProgress.stage >= 3 } : null}
               />
             )}
             {activeView === "script" && (
@@ -2466,6 +2563,9 @@ export default function ScriptDetailPage() {
                 script={script}
                 editContent={editContent}
                 setEditContent={setEditContent}
+                aiGeneratedContent={aiGeneratedContent}
+                contentVersion={contentVersion}
+                setContentVersion={setContentVersion}
                 episodeContentMap={episodeContentMap}
                 setEpisodeContentMap={setEpisodeContentMap}
                 activeEpisode={activeEpisode}
@@ -2481,6 +2581,7 @@ export default function ScriptDetailPage() {
                 generatedOutline={generatedOutline}
                 onFileUpload={handleFileUpload}
                 onGenerateFullScript={handleGenerateFullScript}
+                stageProgress={stageProgress}
               />
               </>
             )}
@@ -2696,9 +2797,26 @@ export default function ScriptDetailPage() {
                 optimizingMode={optimizingMode}
                 onOptimize={handleStreamOptimize}
                 onModeChange={setOptimizingMode}
-                onApplyToScript={(content) => {
-                  setEditContent(content);
-                  toast.success('已应用到剧本');
+                onApplyToScript={async (content) => {
+                  setAiGeneratedContent(content);
+                  setContentVersion('ai');
+                  // 自动保存优化后的内容
+                  try {
+                    await apiFetch(`/api/scripts/${id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        title: script?.title,
+                        content: content,
+                        episodeCount: script?.episodeCount,
+                        genre: script?.genre,
+                        status: 'draft',
+                      }),
+                    });
+                    toast.success('已生成AI版本并自动保存');
+                  } catch {
+                    toast.success('已生成AI版本，请手动保存');
+                  }
                 }}
                 onOptimizedTextChange={setOptimizedStreamText}
               />

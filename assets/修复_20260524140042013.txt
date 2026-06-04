@@ -1,0 +1,535 @@
+## AI优化修复指令：剧本库功能全面完善
+
+### 文件范围
+- **修改文件**：
+  - `/src/hooks/useAIStream.ts`（核心修复）
+  - `/src/app/scripts/[id]/page.tsx`（分镜生成、服装/场景/道具提取、集数标签）
+  - `/src/app/scripts/page.tsx`（剧本封面图智能生成）
+  - `/src/app/characters/[id]/page.tsx`（角色预览图智能生成）
+- **保留文件**：
+  - 所有原有功能组件（AppShell、StoryboardCard等）
+
+---
+
+## 一、P0核心问题修复
+
+### 1.1 修复 `useAIStream` Hook
+
+**问题**：Hook 忽略 `text` 类型数据，导致分镜生成返回 null
+
+**修改文件**：`/src/hooks/useAIStream.ts`
+
+```typescript
+export function useAIStream() {
+  const [state, setState] = useState<AIStreamState>(initialState);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const run = useCallback(
+    async (url: string, body?: Record<string, unknown>): Promise<unknown> => {
+      setState({ ...initialState, isRunning: true });
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        let token = "";
+        if (typeof window !== "undefined") {
+          const session = localStorage.getItem("nvwa_session");
+          if (session) {
+            try {
+              const parsed = JSON.parse(session);
+              token = parsed?.access_token || "";
+            } catch {}
+          }
+        }
+        
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ ...body, _stream: true }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
+        if (!response.body) {
+          throw new Error("Response body is null");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: unknown = null;
+        let accumulatedText = "";  // 新增：累积流式文本
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (!jsonStr) continue;
+            
+            try {
+              const data = JSON.parse(jsonStr);
+              
+              // ========== 新增：处理 text/delta 类型 ==========
+              if (data.type === "text" || data.type === "delta") {
+                accumulatedText += data.content || "";
+                setState((prev) => ({
+                  ...prev,
+                  message: data.content || prev.message,
+                }));
+              }
+              // ========== end 新增 ==========
+              
+              if (data.type === "progress") {
+                setState((prev) => ({
+                  ...prev,
+                  progress: data.progress ?? prev.progress,
+                  stage: data.stage ?? prev.stage,
+                  message: data.message ?? prev.message,
+                }));
+              } else if (data.type === "complete") {
+                finalResult = data.data ?? (accumulatedText || data);
+                setState((prev) => ({
+                  ...prev,
+                  isRunning: false,
+                  progress: 100,
+                  stage: "complete",
+                  message: data.message ?? "完成",
+                }));
+              } else if (data.type === "error") {
+                throw new Error(data.message ?? "未知错误");
+              }
+            } catch {}
+          }
+        }
+
+        // 如果没有收到 complete 消息，但有累积文本，作为结果返回
+        if (finalResult === null && accumulatedText) {
+          finalResult = { content: accumulatedText };
+        }
+        
+        if (finalResult === null) {
+          throw new Error("未收到完整结果");
+        }
+        return finalResult;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "请求失败";
+        setState((prev) => ({ ...prev, isRunning: false, error: msg }));
+        throw err;
+      }
+    },
+    []
+  );
+
+  const abort = useCallback(() => {
+    abortRef.current?.abort();
+    setState((prev) => ({ ...prev, isRunning: false, error: "已取消" }));
+  }, []);
+
+  return { state, run, abort };
+}
+```
+
+---
+
+### 1.2 修复分镜生成逻辑
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+**找到并修改** `handleSplitScenes` 函数：
+
+```typescript
+const handleSplitScenes = async () => {
+  if (!script?.content?.trim()) { 
+    toast.error("剧本内容为空，请先在剧本编辑区输入内容");
+    setActiveView("storyboard");
+    return; 
+  }
+  
+  setIsSplitting(true);
+  setActiveView("storyboard");
+  setShowEpisodeSelector(false);
+  
+  try {
+    const result = await splitStream.run("/api/ai/split-scenes", {
+      scriptContent: script.content,
+    });
+    
+    const data = result as Record<string, unknown>;
+    let scenes: ScriptStoryboard[] = [];
+    
+    // 处理多种返回格式
+    if (Array.isArray(data.scenes)) {
+      scenes = (data.scenes as Record<string, string>[]).map((s, i) => ({
+        num: i + 1,
+        duration: s.duration || s.time || "5s",
+        description: s.description || s.scene || s.content || "",
+        character: s.character || s.characters || "",
+        shot: s.shot || s.type || "中景",
+        camera: s.camera || s.movement || "固定",
+        audio: s.audio || s.sound || "",
+      }));
+    } else if (data.content) {
+      let raw = data.content;
+      if (typeof raw === 'string') {
+        try { 
+          raw = JSON.parse(raw); 
+        } catch {}
+      }
+      if (Array.isArray(raw)) {
+        scenes = (raw as Record<string, string>[]).map((s, i) => ({
+          num: i + 1,
+          duration: s.duration || s.time || "5s",
+          description: s.description || s.scene || s.content || "",
+          character: s.character || s.characters || "",
+          shot: s.shot || s.type || "中景",
+          camera: s.camera || s.movement || "固定",
+          audio: s.audio || s.sound || "",
+        }));
+      }
+    }
+    
+    if (scenes.length > 0) {
+      setScript((prev) => (prev ? { ...prev, storyboards: scenes } : null));
+      try {
+        await apiFetch(`/api/scripts/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storyboards: scenes }),
+        });
+      } catch {
+        toast.error("分镜数据保存到数据库失败");
+      }
+      toast.success(`成功拆分出 ${scenes.length} 个分镜`);
+    } else {
+      toast.error("分镜拆分结果为空，请尝试重新生成");
+    }
+  } catch (error) {
+    console.error('分镜生成失败:', error);
+    toast.error("分镜拆分失败");
+  } finally {
+    setIsSplitting(false);
+  }
+};
+```
+
+---
+
+## 二、P1功能完善
+
+### 2.1 服装/场景/道具批量自动提取
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+**修改** `handleExtractCostumes` 函数：
+
+```typescript
+const handleExtractCostumes = async () => {
+  if (!editContent) { 
+    toast.error("剧本内容为空"); 
+    return; 
+  }
+  setIsExtractingCostumes(true);
+  
+  try {
+    // 检查已有数据
+    if (Object.keys(costumeByEpisode).length > 0) {
+      const existingEpisodes = Object.keys(costumeByEpisode).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
+      setCostumeEpisodes(existingEpisodes);
+      setShowCostumeEpisodes(true);
+      toast.success(`已有 ${existingEpisodes.length} 集服装数据`);
+      setIsExtractingCostumes(false);
+      return;
+    }
+    
+    // 获取集数列表
+    let episodeList: number[] = [];
+    if (script?.episodeCount && script.episodeCount > 0) {
+      episodeList = Array.from({ length: script.episodeCount }, (_, i) => i + 1);
+    } else {
+      if (isAnalyzing) {
+        toast.info("正在分析剧本集数，请稍候...");
+        return;
+      }
+      episodeList = await getOrAnalyzeEpisodes();
+    }
+    
+    if (episodeList.length === 0) {
+      toast.error("无法识别集数");
+      setIsExtractingCostumes(false);
+      return;
+    }
+    
+    setCostumeEpisodes(episodeList);
+    setShowCostumeEpisodes(true);
+    
+    // 自动批量提取每集服装
+    toast.info(`开始提取 ${episodeList.length} 集服装数据...`);
+    
+    for (const episodeNum of episodeList) {
+      try {
+        await handleGetEpisodeDetail('costume', episodeNum, false);
+      } catch (error) {
+        console.error(`第${episodeNum}集服装提取失败:`, error);
+      }
+    }
+    
+    toast.success(`服装提取完成，共 ${Object.keys(costumeByEpisode).length} 集`);
+  } catch {
+    toast.error("分析集数失败");
+  } finally {
+    setIsExtractingCostumes(false);
+  }
+};
+```
+
+> **场景和道具提取**：参考上述代码，对 `handleExtractScenes` 和 `handleExtractProps` 做相同修改
+
+---
+
+### 2.2 修复集数标签栏逻辑
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+**找到剧本编辑视图**，修改如下：
+
+```typescript
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 集数标签栏 - 仅多集时显示 */}
+    {script?.episodeCount && script.episodeCount > 1 && (
+      <>
+        <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-[#333]">
+          {Array.from({ length: script.episodeCount }, (_, i) => i + 1).map(ep => (
+            <button
+              key={ep}
+              onClick={() => setActiveEpisode(ep)}
+              className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                activeEpisode === ep 
+                  ? 'bg-[#0ABAB5] text-black' 
+                  : 'bg-[#1A1A1A] text-[#888888] hover:text-[#F5F5F5]'
+              }`}
+            >
+              第{ep}集
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#888888] mb-2">编辑单集内容会自动保存到总剧本</p>
+      </>
+    )}
+    
+    {/* 剧本内容编辑器 */}
+    <textarea
+      key={activeEpisode}
+      className="flex-1 w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-sm text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none font-mono leading-relaxed"
+      value={script?.episodeCount && script.episodeCount > 1 
+        ? (episodeContentMap[activeEpisode] || editContent)
+        : editContent}
+      onChange={(e) => {
+        const newContent = e.target.value;
+        if (script?.episodeCount && script.episodeCount > 1) {
+          handleEpisodeContentChange(activeEpisode, newContent);
+        } else {
+          setEditContent(newContent);
+        }
+      }}
+      placeholder="在此输入剧本内容..."
+    />
+  </div>
+)}
+```
+
+---
+
+## 三、智能预览图生成
+
+### 3.1 剧本封面图智能生成
+
+**修改文件**：`/src/app/scripts/page.tsx`
+
+**新增**辅助函数和调用：
+
+```typescript
+// 根据剧本类型获取海报风格
+const getScriptPosterStyle = (genre: string): string => {
+  const styles: Record<string, string> = {
+    '都市甜宠': 'modern urban romance, warm sunset colors, couple silhouette, soft romantic lighting',
+    '玄幻修仙': 'xianxia fantasy, mystical energy, ancient Chinese palace, dramatic sky',
+    '悬疑探案': 'noir mystery, dark shadows, rain effect, detective silhouette',
+    '复仇爽剧': 'dark revenge drama, dramatic red accents, intense expression',
+    '古风穿越': 'ancient Chinese dynasty, traditional hanfu, palace architecture',
+    '都市': 'contemporary drama, city skyline, modern lifestyle',
+    '校园': 'school drama, youthful energy, bright colors',
+    '军事': 'military war drama, soldiers, battlefield',
+    '科幻': 'sci-fi futuristic, cyberpunk city, holographic effects',
+  };
+  return styles[genre] || styles['都市'];
+};
+
+// 生成剧本封面图
+const generateCoverImage = async (scriptId: string, scriptData?: { title?: string; genre?: string }) => {
+  try {
+    const genreStyle = getScriptPosterStyle(scriptData?.genre || '都市');
+    const titleKeyword = scriptData?.title ? `${scriptData.title} movie poster, ` : '';
+    
+    const prompt = `${titleKeyword}${genreStyle}, professional movie poster design, cinematic, high quality`;
+    
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        ratio: '16:9',
+      }),
+    });
+    
+    const data = await res.json();
+    if (data.success && data.imageUrl) {
+      await apiFetch(`/api/scripts/${scriptId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coverImage: data.imageUrl }),
+      });
+    }
+  } catch (error) {
+    console.error('生成封面图失败:', error);
+  }
+};
+
+// 在创建新剧本后调用
+useEffect(() => {
+  // ... 现有逻辑 ...
+  apiFetch('/api/scripts', { ... })
+    .then((r) => r.json())
+    .then((res) => {
+      if (res.success && res.data?.id) {
+        generateCoverImage(res.data.id, {
+          title: '未命名剧本',
+          genre: '都市',
+        });
+        router.push(`/scripts/${res.data.id}`);
+      }
+    });
+}, [router]);
+```
+
+---
+
+### 3.2 角色预览图智能生成
+
+**修改文件**：`/src/app/characters/[id]/page.tsx`
+
+**新增**生成函数：
+
+```typescript
+// 生成角色预览图
+const generateCharacterPreview = async (characterId: string, roleData: ScriptRole) => {
+  try {
+    const features: string[] = [];
+    
+    // 性别
+    features.push(roleData.gender === '女' ? 'female actress' : 
+                  roleData.gender === '男' ? 'male actor' : 'actor');
+    
+    // 外貌描述
+    if (roleData.appearance) {
+      features.push(roleData.appearance);
+    }
+    
+    // 服装描述
+    if (roleData.costume) {
+      features.push(`wearing ${roleData.costume}`);
+    }
+    
+    // 性格/气质
+    if (roleData.feature) {
+      features.push(roleData.feature);
+    }
+    
+    // 角色标签
+    if (roleData.tag) {
+      features.push(`character: ${roleData.tag}`);
+    }
+    
+    // 基础风格
+    features.push('realistic portrait, professional headshot, cinematic lighting');
+    
+    const prompt = features.join(', ');
+    
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        ratio: '3:4',
+        style: 'portrait',
+      }),
+    });
+    
+    const result = await res.json();
+    if (result.success && result.imageUrl) {
+      await apiFetch(`/api/characters/${characterId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar: result.imageUrl }),
+      });
+      
+      setCharacter((prev) => prev ? { ...prev, avatar: result.imageUrl } : null);
+      toast.success('角色预览图已生成');
+    }
+  } catch (error) {
+    console.error('生成角色预览图失败:', error);
+  }
+};
+
+// 在角色保存后调用
+const handleSave = async () => {
+  // ... 现有保存逻辑 ...
+  
+  // 保存成功后生成预览图
+  if (character && character.name) {
+    generateCharacterPreview(id, character);
+  }
+};
+```
+
+---
+
+## 四、测试验证清单
+
+| 功能 | 测试点 |
+|------|--------|
+| 分镜生成 | 点击生成分镜能正确返回数据 |
+| 服装批量提取 | 点击提取服装自动批量处理 |
+| 场景批量提取 | 点击提取场景自动批量处理 |
+| 道具批量提取 | 点击提取道具自动批量处理 |
+| 集数标签栏 | 编辑单集内容正确同步到总剧本 |
+| 剧本封面图 | 新建剧本后自动生成风格化海报 |
+| 角色预览图 | 新建/更新角色后自动生成头像 |
+| AI优化 | 流式生成正常显示 |
+
+---
+
+## 五、代码保护规则
+
+1. **不修改** `AppShell`、`StoryboardCard` 等核心组件
+2. **保留** 所有 `toast` 提示和错误处理
+3. **兼容** 现有 API 调用方式
+4. **保留** 移动端适配相关代码

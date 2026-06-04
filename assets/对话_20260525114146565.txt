@@ -1,0 +1,107 @@
+### 3. ❌ 分镜生图存在两个问题
+
+#### 问题 A：前端轮询缺少 model 参数
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**第206-212行**:
+```typescript
+const pollImageTask = async (taskId: string, attempts: number = 0) => {
+  const maxAttempts = 60;
+  const pollInterval = 3000;
+  
+  try {
+    const taskRes = await apiFetch(`/api/ai/tasks/${taskId}`);  // ❌ 缺少 model 参数
+```
+
+**问题**: 即梦任务需要传递 `model` 参数才能正确查询，但分镜生图没有传递。
+
+**对比文生图的轮询**（正确）:
+```typescript
+// 文生图轮询传递了 model
+pollTaskResult(combinedTaskId, ..., currentModel, ...);
+```
+
+#### 问题 B：即梦任务ID判断不适用于某些情况
+
+**文件**: [`src/app/api/ai/tasks/[id]/route.ts`](file:///d:/nvwa_projects/src/app/api/ai/tasks/[id]/route.ts)
+
+**第58-61行**:
+```typescript
+function isJimengTaskId(taskId: string): boolean {
+  return /^\d+$/.test(taskId);  // 只判断是否为纯数字
+}
+```
+
+**问题**: 即梦4.6模型返回的任务ID可能不完全是纯数字，可能导致轮询时走了错误的分支。
+
+---
+
+## 结论与修复指令
+
+### 根本原因
+
+分镜生图**无法显示**的原因是：
+
+1. **前端未正确传递 model 参数给轮询接口**
+2. **后端轮询接口可能无法正确识别即梦4.6模型的任务**
+
+### 修复指令
+
+#### 步骤 1：修复 StoryboardCard 轮询调用
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**修改第189-190行**:
+```typescript
+// 立即开始轮询（不延迟）- 需要传递 model 参数
+pollImageTask(taskId, 0, 'seedream-4.6-t2i');
+
+// 修改 pollImageTask 函数签名
+const pollImageTask = async (taskId: string, attempts: number = 0, model?: string) => {
+  // ...
+  const taskRes = await apiFetch(`/api/ai/tasks/${taskId}?model=${model || 'seedream-4.6-t2i'}`);
+```
+
+#### 步骤 2：确保提交时记录 model
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**修改第141-204行的 handleGenerateImage 函数**:
+```typescript
+const handleGenerateImage = async () => {
+  if (!editablePrompt) return;
+  setGeneratingImg(true);
+  setProgress(10);
+  setProgressText('正在提交任务...');
+  
+  // 记录使用的模型
+  const currentModel = 'seedream-4.6-t2i';
+  
+  try {
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        prompt: editablePrompt, 
+        model: currentModel,
+        n: 1,
+        size: imgRatio === "16:9" ? "1280*720" : imgRatio === "9:16" ? "720*1280" : "1024*1024"
+      }),
+    });
+    
+    // ... 后续代码 ...
+    
+    // 轮询时传递 model
+    pollImageTask(taskId, 0, currentModel);
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 分镜生图按钮点击 | 显示进度，成功后显示图片 |
+| 异步任务轮询 | 正确调用 `/api/ai/tasks/{id}?model=seedream-4.6-t2i` |
+| 刷新页面 | 图片URL持久化，重新显示 |

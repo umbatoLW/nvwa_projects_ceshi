@@ -1,0 +1,153 @@
+toolName: search_by_regex
+            
+status: success
+          
+query: activeView === "optimize"
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\scripts\[id]\page.tsx
+          
+## AI修复指令：AI优化双栏对比视图问题修复
+
+### 文件范围
+- **修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+### 问题分析
+
+| 问题 | 原因 |
+|------|------|
+| 没有滚动条 | ScrollArea 组件与 flex 布局冲突，高度计算问题 |
+| 不能滚轮滚动 | ScrollArea 覆盖了原生滚动行为 |
+| 不能编辑 | 优化结果使用 `<pre>` 标签，只能展示不能编辑 |
+
+---
+
+### 修复代码
+
+**位置**：`activeView === "optimize"` 部分（约第 2970-2990 行）
+
+**找到这段代码**：
+```tsx
+{/* 双栏对比视图 */}
+<div className="flex gap-4 flex-1 min-h-0">
+  {/* 原文 */}
+  <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#333]">
+    <div className="px-4 py-2 bg-[#141414] border-b border-[#333] text-sm text-[#888888]">原文</div>
+    <ScrollArea className="flex-1 p-4">
+      <pre className="text-sm text-foreground whitespace-pre-wrap">{editContent || '暂无内容'}</pre>
+    </ScrollArea>
+  </div>
+  
+  {/* 优化结果 */}
+  <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#0ABAB5]/50">
+    <div className="px-4 py-2 bg-[#0ABAB5]/10 border-b border-[#0ABAB5]/30 flex items-center justify-between">
+      <span className="text-sm text-[#0ABAB5] font-medium">优化结果</span>
+      {optimizedStreamText && (
+        <Button size="sm" onClick={() => {
+          setEditContent(optimizedStreamText);
+          toast.success('已应用到剧本');
+        }}>
+          应用到剧本
+        </Button>
+      )}
+    </div>
+    <ScrollArea className="flex-1 p-4">
+      {isOptimizingStream ? (
+        <div className="text-sm text-foreground whitespace-pre-wrap">
+          {optimizedStreamText || '正在优化中...'}
+          <span className="animate-pulse">|</span>
+        </div>
+      ) : optimizedStreamText ? (
+        <pre className="text-sm text-foreground whitespace-pre-wrap">{optimizedStreamText}</pre>
+      ) : (
+        <div className="text-center text-[#888888] py-8">
+          <p>点击「开始优化」按钮生成优化内容</p>
+        </div>
+      )}
+    </ScrollArea>
+  </div>
+</div>
+```
+
+**替换为以下代码**：
+
+```tsx
+{/* 双栏对比视图 - 修复滚动和编辑问题 */}
+<div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
+  {/* 原文 */}
+  <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#333]">
+    <div className="px-4 py-2 bg-[#141414] border-b border-[#333] text-sm text-[#888888] flex-shrink-0">
+      原文
+    </div>
+    <div className="flex-1 overflow-y-auto p-4">
+      <pre className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{editContent || '暂无内容'}</pre>
+    </div>
+  </div>
+  
+  {/* 优化结果 - 支持编辑 */}
+  <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#0ABAB5]/50">
+    <div className="px-4 py-2 bg-[#0ABAB5]/10 border-b border-[#0ABAB5]/30 text-sm flex items-center justify-between flex-shrink-0">
+      <span className="text-[#0ABAB5] font-medium">优化结果</span>
+      {optimizedStreamText && (
+        <Button size="sm" onClick={() => {
+          setEditContent(optimizedStreamText);
+          toast.success('已应用到剧本');
+        }}>
+          应用到剧本
+        </Button>
+      )}
+    </div>
+    <div className="flex-1 overflow-y-auto p-4">
+      {isOptimizingStream ? (
+        <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+          {optimizedStreamText || '正在优化中...'}
+          <span className="animate-pulse">|</span>
+        </div>
+      ) : optimizedStreamText ? (
+        <textarea
+          className="w-full h-full min-h-[200px] bg-transparent border-none outline-none resize-none text-sm text-foreground whitespace-pre-wrap leading-relaxed"
+          value={optimizedStreamText}
+          onChange={(e) => setOptimizedStreamText(e.target.value)}
+          placeholder="优化结果将显示在这里，可以手动编辑..."
+        />
+      ) : (
+        <div className="text-center text-[#888888] py-8">
+          <p>点击「开始优化」按钮生成优化内容</p>
+        </div>
+      )}
+    </div>
+  </div>
+</div>
+```
+
+---
+
+### 关键修改点
+
+| 修改 | 说明 |
+|------|------|
+| 移除 `ScrollArea` | 使用原生 `overflow-y-auto` + `div` 容器 |
+| 原文改用 `div` 包裹 `pre` | 原文只读，保持 pre 标签样式 |
+| 优化结果改用 `textarea` | 支持用户直接编辑优化结果 |
+| 添加 `flex-shrink-0` | 防止标题栏被压缩 |
+| 添加 `min-h-[200px]` | 确保 textarea 有最小高度 |
+| 添加 `leading-relaxed` | 改善行高便于阅读 |
+
+---
+
+### 测试清单
+
+- [ ] 原文区域可以滚动
+- [ ] 原文区域可以用鼠标滚轮滚动
+- [ ] 优化结果区域可以滚动
+- [ ] 优化结果区域可以用鼠标滚轮滚动
+- [ ] 优化结果支持手动编辑
+- [ ] 点击「应用到剧本」能正确同步内容
+- [ ] 流式生成时内容能实时更新并滚动

@@ -1,0 +1,217 @@
+我来检查当前页面布局，确认需要调整的位置。
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\components\script-views\ScriptEditor.tsx
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\scripts\[id]\page.tsx
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\scripts\[id]\page.tsx
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\scripts\[id]\page.tsx
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: 简介|提炼大纲|editSynopsis
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\scripts\[id]\page.tsx
+          
+
+## AI修复指令：调整布局
+
+### 一、修改说明
+
+#### 1.1 移动简介/大纲编辑框到剧本编辑框上方
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+找到"简介/大纲"区域（约第2280-2304行），将其移动到 `ScriptEditor` 组件上方。
+
+在 `{activeView === "script" && (` 之前添加：
+
+```tsx
+{activeView === "script" && (
+  <>
+    {/* 简介/大纲编辑框 - 移到剧本编辑框上方 */}
+    <div className="p-6 border-b border-[#333]">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          简介
+        </h3>
+        <button
+          onClick={handleExtractOutline}
+          disabled={isExtractingOutline || !editContent.trim()}
+          className="text-xs text-[#0ABAB5] hover:underline disabled:opacity-50"
+        >
+          {isExtractingOutline ? '提炼中...' : '提炼大纲'}
+        </button>
+      </div>
+      <textarea
+        className="outline-content w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
+        rows={3}
+        value={editSynopsis}
+        onChange={(e) => setEditSynopsis(e.target.value)}
+        placeholder="输入剧本简介，或点击提炼大纲自动分析..."
+      />
+    </div>
+
+    {/* 剧本编辑组件 */}
+    <ScriptEditor
+      script={script}
+      editContent={editContent}
+      setEditContent={setEditContent}
+      episodeContentMap={episodeContentMap}
+      setEpisodeContentMap={setEpisodeContentMap}
+      activeEpisode={activeEpisode}
+      setActiveEpisode={setActiveEpisode}
+      isUploading={isUploading}
+      uploadProgress={uploadProgress}
+      analyzeProgress={analyzeProgress}
+      isGeneratingScript={isGeneratingScript}
+      scriptIdea={scriptIdea}
+      setScriptIdea={setScriptIdea}
+      targetEpisodes={targetEpisodes}
+      setTargetEpisodes={setTargetEpisodes}
+      generatedOutline={generatedOutline}
+      onFileUpload={handleFileUpload}
+      onGenerateFullScript={handleGenerateFullScript}
+    />
+  </>
+)}
+```
+
+---
+
+#### 1.2 删除左下角重复的"导入剧本"功能
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+删除左侧面板中的"导入剧本"区块（约第2307-2321行）：
+
+```tsx
+// 删除以下代码
+{/* Upload file */}
+<div>
+  <h3 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+    导入剧本
+  </h3>
+  <input
+    ref={fileInputRef}
+    type="file"
+    accept=".txt,.md,.docx,.pdf"
+    className="hidden"
+    onChange={handleFileUpload}
+  />
+  <button
+    onClick={() => fileInputRef.current?.click()}
+    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[#1A1A1A] hover:bg-[#222] text-sm text-foreground transition-colors text-left"
+  >
+    <Upload className="w-4 h-4 text-[#0ABAB5]" />
+    <span>上传剧本文件</span>
+  </button>
+</div>
+```
+
+---
+
+### 二、修改后的布局结构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  左侧面板                                                    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 封面图 | 集数 | 字数/场景                              │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 功能视图按钮                                          │    │
+│  │ - AI对话                                             │    │
+│  │ - 剧本编辑 ← 当前选中                                 │    │
+│  │ - 生成分镜                                            │    │
+│  │ - 提取角色                                            │    │
+│  │ ...                                                  │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 标签                                                  │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  右侧面板 (剧本编辑视图)                                      │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 简介编辑框 (新位置：剧本编辑框上方)                    │    │
+│  │ [大纲提炼按钮]                                        │    │
+│  │ ┌─────────────────────────────────────────────────┐ │    │
+│  │ │ 简介内容...                                      │ │    │
+│  │ └─────────────────────────────────────────────────┘ │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 剧本编辑                                             │    │
+│  │ [上传剧本按钮]              共X集 | 当前第X集         │    │
+│  │ ┌─────────────────────────────────────────────────┐ │    │
+│  │ │ 剧本内容...                                      │ │    │
+│  │ └─────────────────────────────────────────────────┘ │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 三、禁止事项
+
+1. **禁止** 删除左侧面板的功能视图按钮
+2. **禁止** 删除 ScriptEditor 组件
+3. **禁止** 修改简介编辑框的功能逻辑
+4. **禁止** 删除 `handleFileUpload` 函数（右侧上传按钮仍需使用）
+
+---
+
+### 四、验证清单
+
+| 检查项 | 通过标准 |
+|--------|---------|
+| 简介编辑框位置 | 显示在剧本编辑框上方 |
+| 导入剧本按钮 | 仅在剧本编辑右上角显示 |
+| 左下角导入剧本 | 已删除 |
+| 功能完整性 | 上传剧本功能正常工作 |

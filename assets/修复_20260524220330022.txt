@@ -1,0 +1,288 @@
+## 精致字体优化方案 - 轻盈高级感
+
+### 一、设计原则
+
+| 原则 | 说明 |
+|------|------|
+| **轻盈克制** | 使用 lighter 字重，避免粗体 |
+| **优雅衬线** | 正文使用精致衬线体 |
+| **适度字间距** | 字间距不宜过大 |
+| **舒适行高** | 行高适中，不松不紧 |
+| **层次分明** | 通过字重微妙区分层级 |
+
+---
+
+### 二、优化方案
+
+#### 2.1 更新全局样式
+
+**修改文件**：`/src/app/globals.css`
+
+```css
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* === 精致字体配置 === */
+  --font-sans:
+    'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, sans-serif;
+  
+  --font-serif:
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC',
+    ui-serif, Georgia, 'Times New Roman', serif;
+  
+  --font-mono:
+    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+  /* === 轻盈字重配置 === */
+  --font-weight-thin: 300;
+  --font-weight-light: 350;
+  --font-weight-normal: 400;
+  --font-weight-medium: 450;
+  --font-weight-semibold: 500;
+
+  /* === 舒适行高 === */
+  --line-height-tight: 1.3;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+  --line-height-leading: 1.7;
+
+  /* === 精致字间距 === */
+  --letter-spacing-tight: -0.01em;
+  --letter-spacing-normal: 0em;
+  --letter-spacing-wide: 0.015em;
+
+  /* === 原有变量保持不变 === */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* ... 其他颜色变量保持不变 ... */
+}
+
+/* === 全局精致重置 === */
+* {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-light);
+  line-height: var(--line-height-normal);
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--foreground);
+}
+
+/* === 场景化字体样式 === */
+
+/* 标题 - 轻盈不张扬 */
+.font-heading {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  line-height: var(--line-height-tight);
+}
+
+/* 正文 - 优雅衬线 */
+.font-body {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-light);
+  line-height: var(--line-height-relaxed);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+/* UI文字 - 简洁现代 */
+.font-ui {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+/* 等宽文字 - 精致紧凑 */
+.font-mono {
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-light);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+/* === 剧本编辑器专用样式 === */
+.script-content {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-light);
+  font-size: 15px;
+  line-height: var(--line-height-leading);
+  letter-spacing: 0.005em;
+  color: var(--foreground);
+}
+
+.script-content h1,
+.script-content h2,
+.script-content h3 {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.script-content h1 { font-size: 1.375rem; }
+.script-content h2 { font-size: 1.125rem; }
+.script-content h3 { font-size: 1rem; }
+
+.script-content p {
+  margin-bottom: 0.875em;
+  text-indent: 2em;
+}
+
+.script-content .scene-heading {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  font-size: 0.875rem;
+}
+
+.script-content .character-name {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  letter-spacing: var(--letter-spacing-wide);
+  text-align: center;
+  margin-top: 0.875em;
+  font-size: 0.9375rem;
+}
+
+.script-content .dialogue {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-light);
+  font-size: 0.9375rem;
+  line-height: var(--line-height-relaxed);
+  padding-left: 3em;
+  padding-right: 6em;
+}
+
+.script-content .parenthetical {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-light);
+  font-style: italic;
+  font-size: 0.8125rem;
+}
+
+/* === 大纲/简介专用样式 === */
+.outline-content {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-light);
+  font-size: 14px;
+  line-height: var(--line-height-relaxed);
+  letter-spacing: 0.005em;
+  color: var(--on-surface-variant);
+}
+
+.outline-content li {
+  margin-bottom: 0.5em;
+}
+
+.outline-content strong {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  color: var(--foreground);
+}
+
+/* === UI 组件样式 === */
+.btn-text {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  font-size: 0.8125rem;
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+.label-text {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  font-size: 0.7rem;
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.card-title {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  font-size: 0.9375rem;
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+.card-subtitle {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-light);
+  font-size: 0.8125rem;
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--muted-foreground);
+}
+
+/* === 响应式调整 === */
+@media (max-width: 768px) {
+  .script-content {
+    font-size: 14px;
+  }
+  
+  .outline-content {
+    font-size: 13px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .script-content {
+    font-size: 16px;
+  }
+  
+  .outline-content {
+    font-size: 15px;
+  }
+}
+```
+
+---
+
+### 三、字体规范总结
+
+| 场景 | 字体族 | 字重 | 字号 | 行高 | 特点 |
+|------|--------|------|------|------|------|
+| **剧本正文** | Serif | 350 (light) | 15px | 1.7 | 轻盈优雅 |
+| **大纲/简介** | Serif | 350 (light) | 14px | 1.6 | 精致阅读 |
+| **页面标题** | Sans | 450 (medium) | 1.375rem | 1.3 | 不张扬 |
+| **UI按钮** | Sans | 400 (normal) | 0.8125rem | 1.5 | 简洁 |
+| **标签/徽章** | Sans | 400 (normal) | 0.7rem | 1.3 | 低调 |
+| **代码** | Mono | 300 (thin) | - | 1.5 | 轻盈 |
+
+---
+
+### 四、对比效果
+
+| 优化前 | 优化后 |
+|--------|--------|
+| 字重 600-700 (粗) | 字重 350-450 (轻盈) |
+| 标题字号大 | 标题字号适中 |
+| 行高不一致 | 行高统一舒适 |
+| 粗体突出 | 字重微妙区分 |
+| 视觉冲击力强 | 低调高级感 |
+
+---
+
+### 五、禁止事项
+
+1. **禁止** 使用字重 600 及以上
+2. **禁止** 使用 `bold` 或 `font-weight: bold`
+3. **禁止** 标题字号超过 1.5rem
+4. **禁止** 随意使用大写字母
+5. **禁止** 字间距超过 0.02em
+
+---
+
+### 六、验证清单
+
+| 检查项 | 通过标准 |
+|--------|---------|
+| 剧本正文 | 轻盈衬线，字重约350 |
+| 按钮文字 | 字重约400，不粗 |
+| 标签文字 | 字重约400，小号字 |
+| 整体视觉 | 精致低调，无突兀粗体 |
+| 阅读体验 | 舒适不累眼 |

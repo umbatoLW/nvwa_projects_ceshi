@@ -1,0 +1,245 @@
+# AI编程指令：仪表盘界面和功能修复
+
+## 📋 任务概述
+
+**目标**: 修复仪表盘界面和功能中的多个问题
+**文件**: 
+- `src/app/dashboard/page.tsx`
+- `src/app/api/dashboard/stats/route.ts`
+**约束**: 只修复数据统计和显示逻辑，不得修改UI布局和样式
+
+---
+
+## 🔧 问题1：分镜今日统计硬编码为0（严重）
+
+### 问题位置
+[src/app/api/dashboard/stats/route.ts:38-45](file:///d:/nvwa_projects/src/app/api/dashboard/stats/route.ts#L38)
+
+### 修复方案
+
+```typescript
+// 修改前
+let totalStoryboards = 0;
+const todayStoryboards = 0;
+scriptsData?.forEach(script => {
+  const storyboards = script.storyboards;
+  if (storyboards && Array.isArray(storyboards)) {
+    totalStoryboards += storyboards.length;
+  }
+});
+
+// 修改后
+let totalStoryboards = 0;
+let todayStoryboards = 0;  // 修改为 let
+scriptsData?.forEach(script => {
+  const storyboards = script.storyboards;
+  if (storyboards && Array.isArray(storyboards)) {
+    totalStoryboards += storyboards.length;
+    // 检查是否是今天创建的剧本
+    if (script.created_at && script.created_at >= todayISO) {
+      todayStoryboards += storyboards.length;
+    }
+  }
+});
+```
+
+---
+
+## 🔧 问题2：最近项目 genre 硬编码（严重）
+
+### 修复方案
+
+**步骤2.1：后端添加 genre 字段**
+
+```typescript
+// src/app/api/dashboard/stats/route.ts:129-135
+// 修改前
+const recentProjects = (scriptsData || []).slice(0, 5).map(s => ({
+  id: s.id,
+  title: s.title || '未命名剧本',
+  type: '剧本',
+  updated: s.updated_at || s.created_at,
+}));
+
+// 修改后
+const recentProjects = (scriptsData || []).slice(0, 5).map(s => ({
+  id: s.id,
+  title: s.title || '未命名剧本',
+  type: '剧本',
+  updated: s.updated_at || s.created_at,
+  genre: s.genre || '未知类型',  // 新增
+}));
+```
+
+**步骤2.2：前端移除硬编码**
+
+```typescript
+// src/app/dashboard/page.tsx:72-81
+// 修改前
+const mapped = (res.data.recentProjects || []).map((p: { id: string; title: string; type: string; updated: string }) => ({
+  id: p.id,
+  title: p.title,
+  type: p.type,
+  updated: new Date(p.updated).toLocaleDateString('zh-CN'),
+  genre: '都市甜宠',  // 硬编码
+}));
+
+// 修改后
+const mapped = (res.data.recentProjects || []).map((p: { id: string; title: string; type: string; updated: string; genre: string }) => ({
+  id: p.id,
+  title: p.title,
+  type: p.type,
+  updated: new Date(p.updated).toLocaleDateString('zh-CN'),
+  genre: p.genre,  // 使用后端数据
+}));
+```
+
+---
+
+## 🔧 问题3：趋势变化计算逻辑不严谨（中等）
+
+### 问题位置
+[src/app/dashboard/page.tsx:134-136](file:///d:/nvwa_projects/src/app/dashboard/page.tsx#L134)
+
+### 修复方案
+
+```typescript
+// 修改前
+<span className={`text-xs font-medium ${stat.change.startsWith('+') || parseInt(stat.change) > 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+  {stat.change === '0' || stat.change === '+0' ? '-' : stat.change}
+</span>
+
+// 修改后
+const changeValue = parseInt(stat.change);
+const isPositive = changeValue > 0;
+const isNeutral = changeValue === 0;
+<span className={`text-xs font-medium ${isPositive ? 'text-[#22C55E]' : isNeutral ? 'text-[#888888]' : 'text-[#EF4444]'}`}>
+  {isNeutral ? '-' : stat.change}
+</span>
+```
+
+---
+
+## 🔧 问题4：loading 状态下柱状图显示异常（中等）
+
+### 问题位置
+[src/app/dashboard/page.tsx:208-257](file:///d:/nvwa_projects/src/app/dashboard/page.tsx#L208)
+
+### 修复方案
+
+```typescript
+// 修改前
+<div className="bg-[#141414] border border-[#333333]/30 rounded-xl p-4">
+  <h3 className="text-sm font-medium text-[#F5F5F5] mb-4">近7天创作活跃度</h3>
+  <div className="flex items-end gap-3 h-40">
+    {activityData.map((value, index) => {
+      // ...
+    })}
+  </div>
+  {/* 底部统计 */}
+  <div className="mt-4 pt-3 border-t border-[#333333]/30 flex items-center justify-between">
+    <span className="text-xs text-[#888888]">本周累计创作</span>
+    <span className="text-sm font-medium text-[#F5F5F5]">{activityData.reduce((a, b) => a + b, 0)} 次</span>
+  </div>
+</div>
+
+// 修改后
+<div className="bg-[#141414] border border-[#333333]/30 rounded-xl p-4">
+  <h3 className="text-sm font-medium text-[#F5F5F5] mb-4">近7天创作活跃度</h3>
+  {loading ? (
+    <div className="flex items-center justify-center h-40">
+      <Loader2 className="w-6 h-6 animate-spin text-[#0ABAB5]" />
+    </div>
+  ) : (
+    <>
+      <div className="flex items-end gap-3 h-40">
+        {activityData.map((value, index) => {
+          // ... 保持原有逻辑
+        })}
+      </div>
+      {/* 底部统计 */}
+      <div className="mt-4 pt-3 border-t border-[#333333]/30 flex items-center justify-between">
+        <span className="text-xs text-[#888888]">本周累计创作</span>
+        <span className="text-sm font-medium text-[#F5F5F5]">{activityData.reduce((a, b) => a + b, 0)} 次</span>
+      </div>
+    </>
+  )}
+</div>
+```
+
+**注意**: 需要添加 Loader2 图标导入：
+
+```typescript
+// 在文件顶部导入
+import {
+  // ... 其他图标
+  Loader2,
+} from 'lucide-react';
+```
+
+---
+
+## 🔧 问题5：日期标签国际化问题（中等）
+
+### 问题位置
+[src/app/api/dashboard/stats/route.ts:119-122](file:///d:/nvwa_projects/src/app/api/dashboard/stats/route.ts#L119)
+
+### 修复方案
+
+```typescript
+// 修改前
+const month = dayStart.getMonth() + 1;
+const date = dayStart.getDate();
+dayLabels.push(`${month}月${date}日`);
+
+// 修改后
+dayLabels.push(dayStart.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' }));
+```
+
+---
+
+## 🔧 问题6：todayAssets 回退逻辑（低优先级）
+
+### 问题位置
+[src/app/api/dashboard/stats/route.ts:152-154](file:///d:/nvwa_projects/src/app/api/dashboard/stats/route.ts#L152)
+
+### 修复方案
+
+```typescript
+// 修改前
+assets: {
+  total: totalAssets || totalGenerations,
+  today: todayAssets || todayGenerations,
+  change: assetChange >= 0 ? `+${assetChange}` : `${assetChange}`,
+},
+
+// 修改后
+assets: {
+  total: totalAssets > 0 ? totalAssets : totalGenerations,
+  today: todayAssets > 0 ? todayAssets : todayGenerations,
+  change: assetChange >= 0 ? `+${assetChange}` : `${assetChange}`,
+},
+```
+
+---
+
+## ✅ 验证清单
+
+修复后必须验证以下场景：
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 分镜统计 | 今日分镜数量正确显示，不为0 |
+| 最近项目 | 显示正确的 genre 标签，不是全部"都市甜宠" |
+| loading 状态 | 柱状图区域显示加载动画 |
+| 趋势变化 | 零值显示灰色，正增长绿色，负增长红色 |
+| 日期标签 | 格式正确（如"5月23日"） |
+
+---
+
+## ⚠️ 禁止事项
+
+1. **禁止修改** UI布局和样式
+2. **禁止修改** 页面结构和组件
+3. **禁止修改** API 接口的请求/响应格式
+4. **禁止** 删除必要的错误日志

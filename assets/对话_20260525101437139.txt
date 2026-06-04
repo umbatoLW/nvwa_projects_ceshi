@@ -1,0 +1,640 @@
+# AI 修复指令：分镜生图/生视频预览与持久化问题修复
+
+## 问题分析
+
+### 问题1：分镜生图预览不显示
+**原因**: 当前代码缺少对异步任务的实时状态展示，用户无法看到生成进度。
+
+### 问题2：分镜生视频无预览
+**原因**: `handleGenerateVideo()` 函数仅提交任务但未处理结果，缺少视频预览框和轮询逻辑。
+
+### 问题3：数据持久化不足
+**原因**: 生成的图片/视频仅存在内存状态中，切换页面或刷新会丢失。
+
+---
+
+## 修复方案
+
+### 步骤1：修改 StoryboardCard.tsx - 增强生图功能
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**修改内容**:
+1. 添加任务ID状态用于追踪异步任务
+2. 添加进度状态显示
+3. 优化轮询逻辑，立即开始第一次查询
+
+```typescript
+// 在第31-37行添加新状态
+const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+const [progress, setProgress] = useState<number | null>(null);
+const [progressText, setProgressText] = useState('');
+
+// 修改 handleGenerateImage 函数（第57-150行）
+const handleGenerateImage = async () => {
+  if (!editablePrompt) return;
+  setGeneratingImg(true);
+  setProgress(10);
+  setProgressText('正在提交任务...');
+  
+  try {
+    console.log('[StoryboardCard] 开始生成分镜图, prompt:', editablePrompt.substring(0, 50));
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        prompt: editablePrompt, 
+        model: 'seedream-4.6-t2i',
+        n: 1,
+        size: imgRatio === "16:9" ? "1280*720" : imgRatio === "9:16" ? "720*1280" : "1024*1024"
+      }),
+    });
+    const data = await res.json();
+    console.log('[StoryboardCard] API返回:', data);
+    
+    const imageUrls = data?.data?.imageUrls || data?.imageUrls;
+    const taskId = data?.data?.taskId || data?.taskId;
+    
+    if (imageUrls && imageUrls.length > 0) {
+      const url = imageUrls[0];
+      console.log('[StoryboardCard] 同步模式获取图片:', url);
+      setImgUrl(url);
+      onImageGenerated?.(url);
+      setProgress(100);
+      setProgressText('生成完成');
+      toast.success('分镜图生成成功');
+      // 自动保存到数据库
+      await handleAutoSave(url);
+    } else if (taskId) {
+      console.log('[StoryboardCard] 异步模式，任务ID:', taskId);
+      setCurrentTaskId(taskId);
+      setProgress(20);
+      setProgressText('任务已提交，等待处理...');
+      
+      // 立即开始轮询（不延迟）
+      pollImageTask(taskId);
+    } else {
+      const errorMsg = data?.error || data?.data?.error || '生图失败，未知响应格式';
+      console.error('[StoryboardCard] 生图失败:', errorMsg, data);
+      toast.error(errorMsg);
+      setGeneratingImg(false);
+      setProgress(null);
+    }
+  } catch (error) {
+    console.error('生图错误:', error);
+    toast.error('生图失败，请检查网络和API配置');
+    setGeneratingImg(false);
+    setProgress(null);
+  }
+};
+
+// 新增轮询函数
+const pollImageTask = async (taskId: string, attempts: number = 0) => {
+  const maxAttempts = 60;
+  const pollInterval = 3000;
+  
+  try {
+    const taskRes = await apiFetch(`/api/ai/tasks/${taskId}`);
+    const taskData = await taskRes.json();
+    console.log(`[StoryboardCard] 轮询第${attempts + 1}次, 状态:`, taskData?.data?.status);
+    
+    const status = taskData?.data?.status;
+    const progressPercent = Math.min(20 + (attempts * 1.5), 90);
+    
+    if (status === 'SUCCEEDED' || status === 'succeeded' || status === 'SUCCESS') {
+      const urls = taskData?.data?.output?.imageUrls || 
+                   taskData?.data?.imageUrls || [];
+      
+      if (urls.length > 0) {
+        const url = urls[0];
+        console.log('[StoryboardCard] 任务完成，获取图片:', url);
+        setImgUrl(url);
+        onImageGenerated?.(url);
+        setProgress(100);
+        setProgressText('生成完成');
+        toast.success('分镜图生成成功');
+        // 自动保存到数据库
+        await handleAutoSave(url);
+      } else {
+        toast.error('任务完成但未获取到图片');
+      }
+      setGeneratingImg(false);
+      setCurrentTaskId(null);
+      setTimeout(() => setProgress(null), 2000);
+    } else if (status === 'FAILED' || status === 'failed') {
+      toast.error(taskData?.data?.message || '图片生成失败');
+      setGeneratingImg(false);
+      setCurrentTaskId(null);
+      setProgress(null);
+    } else {
+      // 更新进度
+      setProgress(Math.round(progressPercent));
+      setProgressText(`正在生成... ${Math.round(progressPercent)}%`);
+      
+      if (attempts < maxAttempts) {
+        setTimeout(() => pollImageTask(taskId, attempts + 1), pollInterval);
+      } else {
+        toast.error('图片生成超时，请稍后刷新查看');
+        setGeneratingImg(false);
+        setCurrentTaskId(null);
+        setProgress(null);
+      }
+    }
+  } catch (err) {
+    console.error('[StoryboardCard] 轮询出错:', err);
+    if (attempts < maxAttempts) {
+      setTimeout(() => pollImageTask(taskId, attempts + 1), pollInterval);
+    } else {
+      toast.error('查询任务状态失败');
+      setGeneratingImg(false);
+      setCurrentTaskId(null);
+      setProgress(null);
+    }
+  }
+};
+
+// 新增自动保存函数
+const handleAutoSave = async (url: string) => {
+  try {
+    const res = await apiFetch('/api/assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'image',
+        category: 'storyboard',
+        name: `分镜${sb.num || index + 1}`,
+        url: url,
+        prompt: editablePrompt,
+        model: 'seedream-4.6-t2i',
+        metadata: {
+          index: index,
+          ratio: imgRatio,
+        },
+      }),
+    });
+    const result = await res.json();
+    if (!result.success) {
+      console.warn('自动保存失败:', result.error);
+    }
+  } catch (err) {
+    console.warn('自动保存失败:', err);
+  }
+};
+```
+
+---
+
+### 步骤2：修改 StoryboardCard.tsx - 增强生视频功能
+
+**修改内容**:
+1. 添加视频预览状态
+2. 添加视频轮询逻辑
+3. 显示视频预览框
+
+```typescript
+// 在状态定义中添加视频相关状态
+const [videoUrl, setVideoUrl] = useState<string | null>(null);
+const [videoTaskId, setVideoTaskId] = useState<string | null>(null);
+const [videoProgress, setVideoProgress] = useState<number | null>(null);
+
+// 修改 handleGenerateVideo 函数（第177-211行）
+const handleGenerateVideo = async () => {
+  if (!editablePrompt) return;
+
+  setGeneratingVideo(true);
+  setVideoProgress(10);
+  
+  try {
+    const videoModel = imgUrl ? 'happyhorse-1.0-i2v' : 'happyhorse-1.0-t2v';
+    console.log('[StoryboardCard] 开始生成视频, model:', videoModel, 'hasImage:', !!imgUrl);
+    
+    const res = await apiFetch('/api/ai/generate-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: editablePrompt,
+        model: videoModel,
+        duration: 5,
+        aspectRatio: imgRatio,
+        firstFrameImage: imgUrl || undefined,
+      }),
+    });
+    const data = await res.json();
+    console.log('[StoryboardCard] 视频API返回:', data);
+    
+    if (data.success && data.data?.taskId) {
+      setVideoTaskId(data.data.taskId);
+      setVideoProgress(20);
+      toast.info('视频生成任务已提交，正在处理中...');
+      // 立即开始轮询
+      pollVideoTask(data.data.taskId);
+    } else {
+      toast.error(data.error || '视频生成失败');
+      setGeneratingVideo(false);
+      setVideoProgress(null);
+    }
+  } catch (error) {
+    console.error('[StoryboardCard] 视频生成错误:', error);
+    toast.error('视频生成失败');
+    setGeneratingVideo(false);
+    setVideoProgress(null);
+  }
+};
+
+// 新增视频轮询函数
+const pollVideoTask = async (taskId: string, attempts: number = 0) => {
+  const maxAttempts = 60;
+  const pollInterval = 5000;
+  
+  try {
+    const taskRes = await apiFetch(`/api/ai/generate-video?taskId=${taskId}`);
+    const taskData = await taskRes.json();
+    console.log(`[StoryboardCard] 视频轮询第${attempts + 1}次, 状态:`, taskData?.data?.status);
+    
+    const status = taskData?.data?.status;
+    const progressPercent = Math.min(20 + (attempts * 1.3), 90);
+    
+    if (status === 'SUCCEEDED' || status === 'succeeded') {
+      const videoUrl = taskData?.data?.videoUrl || taskData?.data?.output?.videoUrl;
+      
+      if (videoUrl) {
+        console.log('[StoryboardCard] 视频生成完成:', videoUrl);
+        setVideoUrl(videoUrl);
+        setVideoProgress(100);
+        toast.success('视频生成成功');
+        // 自动保存到数据库
+        await saveVideoToAssets(videoUrl);
+      } else {
+        toast.error('任务完成但未获取到视频');
+      }
+      setGeneratingVideo(false);
+      setVideoTaskId(null);
+      setTimeout(() => setVideoProgress(null), 2000);
+    } else if (status === 'FAILED' || status === 'failed') {
+      toast.error(taskData?.data?.message || '视频生成失败');
+      setGeneratingVideo(false);
+      setVideoTaskId(null);
+      setVideoProgress(null);
+    } else {
+      setVideoProgress(Math.round(progressPercent));
+      if (attempts < maxAttempts) {
+        setTimeout(() => pollVideoTask(taskId, attempts + 1), pollInterval);
+      } else {
+        toast.error('视频生成超时，请稍后刷新查看');
+        setGeneratingVideo(false);
+        setVideoTaskId(null);
+        setVideoProgress(null);
+      }
+    }
+  } catch (err) {
+    console.error('[StoryboardCard] 视频轮询出错:', err);
+    if (attempts < maxAttempts) {
+      setTimeout(() => pollVideoTask(taskId, attempts + 1), pollInterval);
+    } else {
+      toast.error('查询视频任务状态失败');
+      setGeneratingVideo(false);
+      setVideoTaskId(null);
+      setVideoProgress(null);
+    }
+  }
+};
+
+// 新增视频保存函数
+const saveVideoToAssets = async (url: string) => {
+  try {
+    const res = await apiFetch('/api/assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'video',
+        category: 'storyboard',
+        name: `分镜视频${sb.num || index + 1}`,
+        url: url,
+        prompt: editablePrompt,
+        model: imgUrl ? 'happyhorse-1.0-i2v' : 'happyhorse-1.0-t2v',
+        metadata: {
+          index: index,
+          ratio: imgRatio,
+          duration: 5,
+        },
+      }),
+    });
+    const result = await res.json();
+    if (!result.success) {
+      console.warn('视频自动保存失败:', result.error);
+    }
+  } catch (err) {
+    console.warn('视频自动保存失败:', err);
+  }
+};
+```
+
+---
+
+### 步骤3：修改 StoryboardCard.tsx - 添加视频预览UI
+
+**修改内容**: 在图片预览区域后添加视频预览区域
+
+```tsx
+{/* 在第277行图片预览区域后添加视频预览 */}
+{videoUrl && (
+  <div className="px-4 pb-4">
+    <div className="relative rounded-lg overflow-hidden border border-[#333333] bg-[#0A0A0A]">
+      <div className="aspect-video bg-[#141414] flex items-center justify-center">
+        <video 
+          src={videoUrl} 
+          controls 
+          autoPlay
+          className="w-full h-full object-contain"
+        />
+      </div>
+    </div>
+    <div className="flex gap-2 mt-2">
+      <button
+        onClick={() => handleDownloadVideo(videoUrl)}
+        className="flex-1 text-xs px-3 py-2 rounded-lg bg-[#222222] text-[#F5F5F5] hover:bg-[#333333] transition-colors flex items-center justify-center gap-1.5"
+      >
+        <Download className="w-3 h-3" />
+        下载视频
+      </button>
+      <button
+        onClick={() => setVideoUrl(null)}
+        className="flex-1 text-xs px-3 py-2 rounded-lg bg-[#222222] text-[#888888] hover:bg-[#333333] transition-colors flex items-center justify-center gap-1.5"
+      >
+        <X className="w-3 h-3" />
+        关闭预览
+      </button>
+    </div>
+  </div>
+)}
+
+{/* 进度条显示 */}
+{(progress || videoProgress) && (
+  <div className="px-4 pb-4">
+    <div className="w-full bg-[#222222] rounded-full h-1">
+      <div 
+        className="bg-[#0ABAB5] h-1 rounded-full transition-all duration-300"
+        style={{ width: `${progress || videoProgress}%` }}
+      />
+    </div>
+    <p className="text-xs text-[#888888] mt-1 text-center">
+      {progressText || `生成中... ${progress || videoProgress}%`}
+    </p>
+  </div>
+)}
+```
+
+---
+
+### 步骤4：修改 ScriptContext.tsx - 持久化分镜图片
+
+**文件**: [`src/components/script-views/ScriptContext.tsx`](file:///d:/nvwa_projects/src/components/script-views/ScriptContext.tsx)
+
+**修改内容**: 在保存剧本时同时保存分镜图片
+
+```typescript
+// 查找保存剧本的函数，添加分镜图片的保存逻辑
+const saveScript = useCallback(async () => {
+  // ... 原有逻辑 ...
+  
+  // 添加分镜图片保存
+  if (storyboardImages && Object.keys(storyboardImages).length > 0) {
+    try {
+      const promises = Object.entries(storyboardImages).map(([index, url]) => 
+        apiFetch('/api/assets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'image',
+            category: 'storyboard',
+            name: `分镜${parseInt(index) + 1}`,
+            url: url,
+            prompt: storyboards[parseInt(index)]?.description || '',
+            metadata: {
+              scriptId: currentScript?.id,
+              index: parseInt(index),
+            },
+          }),
+        })
+      );
+      await Promise.all(promises);
+    } catch (err) {
+      console.warn('保存分镜图片失败:', err);
+    }
+  }
+}, [storyboardImages, storyboards, currentScript]);
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 点击生图按钮 | 显示进度条和百分比，生成完成后显示图片预览 |
+| 点击生视频按钮 | 显示进度条，生成完成后显示视频预览 |
+| 生成完成后 | 自动保存到数据库，刷新页面后仍可查看 |
+| 切换页面 | 返回后分镜图片仍然存在 |
+| 登录登出 | 重新登录后分镜图片可从数据库加载 |
+
+---
+
+## 修改文件清单
+
+1. [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+2. [`src/components/script-views/ScriptContext.tsx`](file:///d:/nvwa_projects/src/components/script-views/ScriptContext.tsx)
+
+
+# AI 修复指令：分镜页面优化提示词保存与运镜硬编码问题
+
+## 问题分析
+
+### 问题1：优化提示词不保存
+**原因**: `handleOptimizePrompt()` 函数仅更新组件内存状态，未持久化到数据库，切换页面后丢失。
+
+### 问题2：运镜硬编码
+**原因**: 分镜数据中的 `camera` 字段可能默认为"固定"字符串，属于硬编码值。
+
+---
+
+## 修复方案
+
+### 步骤1：修改 StoryboardCard.tsx - 优化提示词自动保存
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**修改内容**: 在 `handleOptimizePrompt` 函数中添加自动保存逻辑
+
+```typescript
+// 修改 handleOptimizePrompt 函数（第39-55行）
+const handleOptimizePrompt = async () => {
+  setOptimizing(true);
+  try {
+    const res = await apiFetch('/api/ai/optimize-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: editablePrompt }),
+    });
+    const data = await res.json();
+    if (data.success && data.data) {
+      const optimizedPrompt = String(data.data);
+      setEditablePrompt(optimizedPrompt);
+      
+      // 自动保存优化后的提示词到数据库
+      await saveOptimizedPrompt(optimizedPrompt);
+      
+      toast.success('提示词优化成功');
+    }
+  } catch {
+    // keep current prompt
+  }
+  setOptimizing(false);
+};
+
+// 新增保存提示词函数
+const saveOptimizedPrompt = async (prompt: string) => {
+  try {
+    const res = await apiFetch('/api/assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'text',
+        category: 'storyboard-prompt',
+        name: `分镜${sb.num || index + 1}提示词`,
+        url: '',
+        prompt: prompt,
+        metadata: {
+          index: index,
+          originalPrompt: sb.description,
+        },
+      }),
+    });
+    const result = await res.json();
+    if (!result.success) {
+      console.warn('保存优化提示词失败:', result.error);
+    }
+  } catch (err) {
+    console.warn('保存优化提示词失败:', err);
+  }
+};
+```
+
+---
+
+### 步骤2：修改 StoryboardCard.tsx - 修复运镜硬编码显示
+
+**文件**: [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+
+**修改内容**: 在运镜标签显示时添加检查，避免显示硬编码的"固定"值
+
+```tsx
+{/* 修改第263-273行的标签区域 */}
+<div className="flex flex-wrap gap-1.5 mt-3">
+  {sb.camera && sb.camera !== '固定' && sb.camera.trim() !== '' && (
+    <span className="text-[10px] px-2 py-1 rounded bg-[#222222] text-[#888888]">
+      运镜: {sb.camera}
+    </span>
+  )}
+  {sb.audio && sb.audio.trim() !== '' && (
+    <span className="text-[10px] px-2 py-1 rounded bg-[#222222] text-[#888888]">
+      音效: {sb.audio}
+    </span>
+  )}
+</div>
+```
+
+---
+
+### 步骤3：修改分镜拆分API - 修复运镜字段硬编码
+
+**文件**: [`src/app/api/ai/split-scenes/route.ts`](file:///d:/nvwa_projects/src/app/api/ai/split-scenes/route.ts)
+
+**修改内容**: 查找并修复运镜字段的硬编码值
+
+```typescript
+// 在分镜拆分逻辑中，找到设置 camera 字段的地方
+// 修改前（假设的硬编码）:
+camera: '固定',
+
+// 修改后:
+camera: sceneAnalysis.cameraMovement || '',
+// 或
+camera: sceneAnalysis.cameraType || '',
+```
+
+---
+
+### 步骤4：修改脚本详情页面 - 同步优化后的提示词
+
+**文件**: [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx)
+
+**修改内容**: 在加载分镜时同时加载保存的优化提示词
+
+```typescript
+// 在加载分镜数据后，尝试加载优化提示词
+useEffect(() => {
+  const loadOptimizedPrompts = async () => {
+    try {
+      const authHeaders = getAuthHeaders();
+      const response = await fetch('/api/assets?category=storyboard-prompt', {
+        headers: authHeaders,
+      });
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        const prompts = result.data as Array<{
+          id: string;
+          prompt: string;
+          metadata: { index: number };
+        }>;
+        
+        // 更新分镜的优化提示词
+        setStoryboards(prev => prev.map((sb, index) => {
+          const savedPrompt = prompts.find(p => p.metadata?.index === index);
+          if (savedPrompt) {
+            return { ...sb, description: savedPrompt.prompt };
+          }
+          return sb;
+        }));
+      }
+    } catch (err) {
+      console.warn('加载优化提示词失败:', err);
+    }
+  };
+  
+  loadOptimizedPrompts();
+}, [storyboards]);
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 点击优化提示词按钮 | 提示词优化后自动保存，切换页面后仍显示优化后的内容 |
+| 运镜字段为空或"固定" | 不显示运镜标签 |
+| 运镜字段有有效值 | 正常显示运镜标签 |
+| 刷新页面 | 分镜提示词从数据库加载 |
+
+---
+
+## 修改文件清单
+
+1. [`src/components/StoryboardCard.tsx`](file:///d:/nvwa_projects/src/components/StoryboardCard.tsx)
+2. [`src/app/api/ai/split-scenes/route.ts`](file:///d:/nvwa_projects/src/app/api/ai/split-scenes/route.ts)
+3. [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx)
+
+
+## 禁止操作
+- ❌ 禁止修改 `next.config.ts` 中的编译配置
+- ❌ 禁止删除或重命名现有路由文件
+- ❌ 禁止修改认证相关的 cookie 和 token 处理逻辑
+- ❌ 禁止修改数据库连接字符串和密钥
+- ❌ 禁止随意升级核心依赖（React、Next.js、TypeScript）
+- ❌ 禁止修改 `src/lib/auth-context.ts` 认证上下文
+- ❌ 禁止修改 `src/lib/server-auth.ts` 服务端认证逻辑
+- ❌ 禁止修改 `src/storage/database/` 数据库连接配置
+- ❌ 禁止修改 `src/lib/platform-keys.ts` API Key 配置
+- ❌ 禁止修改 `src/app/layout.tsx` 根布局组件
+- ❌ 禁止修改 `src/app/globals.css` 全局样式文件

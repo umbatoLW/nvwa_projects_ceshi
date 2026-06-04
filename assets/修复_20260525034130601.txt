@@ -1,0 +1,328 @@
+
+---
+
+## AI修复指令：分镜图生成功能优化
+
+### 问题分析
+
+1. **生成分镜图按钮无法工作** - API返回格式与前端期望不匹配
+2. **比例选择下拉框样式不好看** - 原生select组件没有使用shadcn/ui样式
+3. **缺少将分镜图保存到资产库的功能**
+4. **缺少视频生成功能**
+5. **分镜图生成后没有保存到script对象中**
+
+---
+
+### 修复步骤
+
+#### 第一步：修复StoryboardCard组件的生图功能
+
+**修改文件**：`src/components/StoryboardCard.tsx`
+
+**1. 添加shadcn/ui Select组件导入**
+
+```typescript
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Package } from "lucide-react";
+```
+
+**2. 修改handleGenerateImage函数，正确处理API响应格式**
+
+```typescript
+const handleGenerateImage = async () => {
+  if (!editablePrompt) return;
+  setGeneratingImg(true);
+  try {
+    const res = await apiFetch("/api/ai/generate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        prompt: editablePrompt, 
+        ratio: imgRatio, 
+        count: 1,
+        size: imgRatio === "16:9" ? "1280*720" : imgRatio === "9:16" ? "720*1280" : "1024*1024"
+      }),
+    });
+    const data = await res.json();
+    // API返回格式是 { success: true, data: { imageUrls: [...] } }
+    const imageUrls = data?.data?.imageUrls || data?.imageUrls;
+    if (imageUrls && imageUrls.length > 0) {
+      const url = imageUrls[0];
+      setImgUrl(url);
+      onImageGenerated?.(url);
+    } else {
+      toast.error(data?.error || data?.data?.error || "生图失败");
+    }
+  } catch (error) {
+    console.error("生图错误:", error);
+    toast.error("生图失败");
+  } finally {
+    setGeneratingImg(false);
+  }
+};
+```
+
+**3. 添加保存到资产库的函数**
+
+```typescript
+const handleSaveToAssetLibrary = async () => {
+  if (!imgUrl) return;
+  try {
+    // 保存到资产库
+    const res = await apiFetch("/api/assets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "image",
+        name: `分镜${sb.num || index + 1}`,
+        url: imgUrl,
+        description: editablePrompt,
+        tags: ["分镜", "剧本"],
+      }),
+    });
+    const result = await res.json();
+    if (result.success) {
+      toast.success("已保存到资产库");
+    } else {
+      toast.error(result.error || "保存失败");
+    }
+  } catch {
+    toast.error("保存到资产库失败");
+  }
+};
+```
+
+**4. 添加视频生成函数**
+
+```typescript
+const handleGenerateVideo = async () => {
+  if (!imgUrl && !editablePrompt) return;
+  const confirm = window.confirm("确定要生成分镜视频吗？");
+  if (!confirm) return;
+
+  try {
+    const res = await apiFetch("/api/ai/generate-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: editablePrompt,
+        model: "happyhorse-1.0-i2v",
+        duration: 5,
+        aspectRatio: imgRatio,
+        firstFrameImage: imgUrl,
+      }),
+    });
+    const data = await res.json();
+    if (data.success && data.data?.taskId) {
+      toast.success("视频生成任务已提交，请稍后在工作区查看");
+    } else {
+      toast.error(data.error || "视频生成失败");
+    }
+  } catch {
+    toast.error("视频生成失败");
+  }
+};
+```
+
+**5. 使用shadcn/ui Select组件替换原生select**
+
+找到原来的select元素（大约183-191行），替换为：
+
+```tsx
+<Select value={imgRatio} onValueChange={setImgRatio}>
+  <SelectTrigger className="text-xs bg-[#0A0A0A] border border-[#333333] text-[#F5F5F5] focus:outline-none focus:border-[#0ABAB5] h-9 w-32">
+    <SelectValue placeholder="选择比例" />
+  </SelectTrigger>
+  <SelectContent className="bg-[#1A1A1A] border border-[#333333] text-[#F5F5F5]">
+    <SelectItem value="16:9">16:9 横版</SelectItem>
+    <SelectItem value="9:16">9:16 竖版</SelectItem>
+    <SelectItem value="1:1">1:1 方版</SelectItem>
+    <SelectItem value="4:3">4:3 标准</SelectItem>
+  </SelectContent>
+</Select>
+```
+
+**6. 在图片生成后添加保存到资产库和视频生成按钮**
+
+找到图片生成后的操作按钮区域（大约162-177行），修改为：
+
+```tsx
+{/* 操作按钮 */}
+<div className="flex flex-col gap-2 mt-2">
+  <div className="flex items-center gap-2">
+    <button
+      onClick={handleDownload}
+      className="flex-1 text-xs px-3 py-2 rounded-lg bg-[#222222] text-[#F5F5F5] hover:bg-[#333333] transition-colors flex items-center justify-center gap-1.5"
+    >
+      <Download className="w-3 h-3" />
+      下载
+    </button>
+    <button
+      onClick={handleSaveToAssetLibrary}
+      className="flex-1 text-xs px-3 py-2 rounded-lg bg-[#222222] text-[#F5F5F5] hover:bg-[#0ABAB5]/20 hover:text-[#0ABAB5] transition-colors flex items-center justify-center gap-1.5"
+    >
+      <Package className="w-3 h-3" />
+      保存到资产库
+    </button>
+  </div>
+  <button
+    onClick={handleGenerateVideo}
+    className="w-full text-xs px-3 py-2 rounded-lg bg-[#0ABAB5]/10 text-[#0ABAB5] border border-[#0ABAB5]/20 hover:bg-[#0ABAB5]/20 transition-all flex items-center justify-center gap-1.5"
+  >
+    <Film className="w-3 h-3" />
+    生成分镜视频
+  </button>
+  <button
+    onClick={handleOptimizePrompt}
+    disabled={optimizing}
+    className="w-full text-xs px-3 py-2 rounded-lg bg-[#222222] text-[#888888] hover:bg-[#0ABAB5]/20 hover:text-[#0ABAB5] transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+  >
+    <Sparkles className="w-3 h-3" />
+    {optimizing ? '优化中...' : '优化提示词'}
+  </button>
+</div>
+```
+
+---
+
+#### 第二步：修改剧本详情页面，保存分镜图到script对象
+
+**修改文件**：`src/app/scripts/[id]/page.tsx`
+
+**1. 修改onImageGenerated回调，保存分镜图到script对象**
+
+找到 `StoryboardView` 组件的调用（大约2426-2444行），修改 `onImageGenerated`：
+
+```tsx
+onImageGenerated={(index, url) => {
+  // 更新storyboardImages状态
+  setStoryboardImages(prev => ({ ...prev, [index]: url }));
+  // 更新script对象中的分镜图
+  setScript(prev => {
+    if (!prev) return prev;
+    const newStoryboards = [...prev.storyboards];
+    newStoryboards[index] = { ...newStoryboards[index], imgUrl: url };
+    return { ...prev, storyboards: newStoryboards };
+  });
+  // 保存到数据库
+  apiFetch(`/api/scripts/${params.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      storyboards: script?.storyboards.map((sb, i) => 
+        i === index ? { ...sb, imgUrl: url } : sb
+      )
+    }),
+  }).catch(() => {});
+}}
+```
+
+**2. 在ScriptDetail接口中确保imgUrl字段存在**
+
+找到 `ScriptDetail` 接口定义，确认 `storyboards` 包含 `imgUrl`：
+
+```typescript
+interface ScriptStoryboard {
+  num: number;
+  duration: string;
+  description: string;
+  character: string;
+  shot: string;
+  camera: string;
+  audio: string;
+  imgUrl?: string;  // 确保这个字段存在
+}
+```
+
+---
+
+#### 第三步：优化StoryboardView组件，添加全局比例选择
+
+**修改文件**：`src/components/script-views/StoryboardView.tsx`
+
+**1. 添加全局比例选择状态和导入Select组件**
+
+在文件顶部添加：
+
+```typescript
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useState } from "react";
+```
+
+**2. 添加全局比例选择状态**
+
+在StoryboardView组件中添加：
+
+```typescript
+const [globalRatio, setGlobalRatio] = useState("16:9");
+```
+
+**3. 在操作栏添加全局比例选择**
+
+在操作栏（大约第64-85行）添加比例选择：
+
+```tsx
+<div className="flex items-center justify-between mb-4">
+  <div className="flex items-center gap-3">
+    <h2 className="text-lg font-semibold">分镜脚本</h2>
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-[#888888]">全局比例：</span>
+      <Select value={globalRatio} onValueChange={setGlobalRatio}>
+        <SelectTrigger className="text-xs bg-[#0A0A0A] border border-[#333333] text-[#F5F5F5] h-8 w-28">
+          <SelectValue placeholder="选择比例" />
+        </SelectTrigger>
+        <SelectContent className="bg-[#1A1A1A] border border-[#333333] text-[#F5F5F5]">
+          <SelectItem value="16:9">16:9 横版</SelectItem>
+          <SelectItem value="9:16">9:16 竖版</SelectItem>
+          <SelectItem value="1:1">1:1 方版</SelectItem>
+          <SelectItem value="4:3">4:3 标准</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  </div>
+  {/* ... 其余操作栏代码 ... */}
+</div>
+```
+
+**4. 将globalRatio传递给StoryboardCard组件**
+
+找到StoryboardCard映射部分（大约193-200行），添加全局比例：
+
+```tsx
+{storyboards.map((sb, index) => (
+  <StoryboardCard 
+    key={index} 
+    sb={{ ...sb, imgUrl: storyboardImages?.[index] || sb.imgUrl }}  // 传入已有的图片
+    index={index}
+    onImageGenerated={(url) => onImageGenerated(index, url)}
+  />
+))}
+```
+
+**注意**：需要修改StoryboardView组件的props接口，添加storyboardImages参数，并且在剧本详情页面中传递这个参数。
+
+---
+
+### 禁止事项
+
+1. **不要改变API的返回格式** - API已经正确返回 `{ success: true, data: { imageUrls: [...] } }` 格式
+2. **不要删除现有的下载功能** - 只需要添加新功能
+3. **不要引入新的依赖库** - 只使用项目已有的shadcn/ui组件
+4. **不要重构整个组件** - 只修改必要的部分
+5. **不要改变数据流的方向**
+
+---
+
+### 验证标准
+
+修复完成后，应该验证以下内容：
+
+1. ✅ 点击生成分镜图按钮，能够正常生成分镜图
+2. ✅ 比例选择下拉框使用shadcn/ui样式，美观
+3. ✅ 生成的分镜图能够正确显示
+4. ✅ 点击下载按钮能够正常下载分镜图
+5. ✅ 点击保存到资产库能够保存到资产库
+6. ✅ 点击生成分镜视频能够提交视频生成任务
+7. ✅ 刷新页面后，分镜图能够正确显示
+8. ✅ 没有TypeScript错误
+9. ✅ 没有控制台错误

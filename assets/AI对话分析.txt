@@ -1,0 +1,1611 @@
+**建议：先优化修复 P0-P2 阶段（P-Fix-Show），再继续 P3/P4。**
+
+理由：
+1. **P0-P2 后端已投入大量开发，如果前端不透出 = 用户完全感知不到，投入浪费**
+2. **评分功能已报错**，说明 P2-3 `review-script` API 或 P2-8 前端适配存在 bug，必须先修
+3. **先修 bug 再打新地基**，否则 P3/P4 开发完依然是"后端很牛、前端无感"
+4. **P-Fix-Show 工期 3-4 天，快速见效**，让用户立刻感受到"剧本质量评分、三阶段进度、付费卡点高亮"等亮点
+
+---
+
+# 女娲(NVWA) — Coze AI编程助手 P-Fix-Show 开发指令
+
+> 前置条件：P0-P2 后端已验收通过（tag `v0.11.0-script`），但前端界面未透出功能，且存在已知 bug
+> 本阶段目标：修复 5 个界面硬伤 + 透出 7 个后台亮点功能，让用户真正感知 P0-P2 价值
+> 预计工期：3-4 天
+> 分支：`feature/p-fix-show`
+
+---
+
+## 一、你的角色与能力边界（与前序阶段一致）
+
+**你是**：精通 Next.js 16 App Router + TypeScript 5.x + Drizzle ORM + Supabase + Redis + Tailwind CSS v4 + shadcn/ui 的高级全栈工程师。
+
+**你不得**：
+- 引入新的UI框架（禁止Vue/Element Plus/Gradio等）
+- 修改现有shadcn/ui主题和色彩变量（保持黑底#000、青边#06b6d4、白字#fff）
+- 改变现有字体栈和布局网格
+- 在一个阶段内同时修改多个功能域（禁止边开发边修复）
+- 删除任何现有功能代码（只能标记为@deprecated，保留fallback）
+- 改变现有API路由的接口契约（输入输出格式必须和P2一致）
+- **禁止创建新页面**（不新增 /review、/quality 等路由，只改现有组件内部）
+
+---
+
+## 二、分支策略
+
+```bash
+# 从main切出修复分支
+git checkout main
+git pull origin main
+git checkout -b feature/p-fix-show
+```
+
+**提交格式**：`[P-Fix-N] type: 简短描述` 或 `[P-Show-N] type: 简短描述`
+- 例：`[P-Fix-1] fix: 解耦AI生成state与手动编辑state`
+- 例：`[P-Show-2] feat: 剧本编辑页五维度评分卡片（修复评分失败）`
+
+**每个任务独立commit**，禁止一个commit改多个不相关文件。
+
+---
+
+## 三、基线保护（P0-P2 全部 38 项功能必须 100% 可用）
+
+Phase 0 基线（10项）：
+1-10. `generate-full-script` / `split-scenes` / `extract-characters` / `extract-scenes` / `generate-image` / `generate-video` / `generate-character-views` / `compliance-check` / `consistency-check` / `workspace` 画布
+
+Phase 1 基线（11项）：
+11-21. 数据库8张新表 / Redis限流 / 统一错误格式 / jsonrepair / p-limit并发 / 组件拆分 / 限流429 / 成本记录 / 熔断503 / 构建0错误 / 3D非阻塞
+
+Phase 2 基线（17项）：
+22-38. 知识库构建 / 三阶段SSE流 / 核心对话 / 完整大纲 / 逐集预览 / 五维度评分 / 评分计算 / 评级匹配 / 表情库33种 / 动作库40+ / 表情提示词 / 影视模板FPS-24 / 场景推荐 / 3层融合 / 按需加载 / token监控 / 合规知识库
+
+---
+
+## 四、Bug 修复类（5 项）
+
+---
+
+### 任务 P-Fix-1：解耦 AI 生成 state 与手动编辑 state
+
+**问题描述**：
+- `scripts/[id]/page.tsx` 中 AI 生成结果与手动编辑**共用同一 state**
+- 生成剧本时直接覆盖用户已写内容，导致数据丢失
+- 无法同时保存"AI 生成版"和"用户修改版"
+
+**修复步骤**：
+
+找到剧本编辑/预览组件（通常是 `src/app/scripts/[id]/page.tsx` 或 `src/components/script-editor.tsx`），修改 state 结构：
+
+```typescript
+// ❌ 删除旧代码：
+// const [scriptContent, setScriptContent] = useState("");
+
+// ✅ 替换为新 state 结构：
+const [aiGenerated, setAiGenerated] = useState<any>(null);      // AI生成结果（只读快照）
+const [manualEdit, setManualEdit] = useState<string>("");        // 用户手动输入
+const [displayMode, setDisplayMode] = useState<'ai' | 'manual' | 'diff'>('manual');
+
+// 当前显示的内容（计算属性，非独立state）
+const displayContent = useMemo(() => {
+  if (displayMode === 'ai') return aiGenerated?.content || '';
+  if (displayMode === 'manual') return manualEdit;
+  if (displayMode === 'diff') {
+    // 简单diff：展示AI版 vs 手动版（可用react-diff-viewer或简单高亮）
+    return manualEdit; // 先显示手动版，diff模式后续迭代
+  }
+  return '';
+}, [displayMode, aiGenerated, manualEdit]);
+
+// AI生成完成后，不覆盖manualEdit，只更新aiGenerated
+const handleAIGenerationComplete = (generatedScript: any) => {
+  setAiGenerated(generatedScript);
+  // 如果用户还没有手动编辑过，自动切换到AI版
+  if (!manualEdit || manualEdit === '') {
+    setDisplayMode('ai');
+  }
+  // 否则保持当前模式，用户自行切换
+};
+
+// 保存时，根据当前模式保存对应内容
+const handleSave = async () => {
+  const contentToSave = displayMode === 'ai' 
+    ? aiGenerated?.content 
+    : manualEdit;
+  
+  await saveScript({
+    ...script,
+    content: contentToSave,
+    aiVersion: aiGenerated, // 同时保存AI版本供对比
+    manualVersion: manualEdit,
+    lastEditedMode: displayMode,
+  });
+};
+```
+
+**在 UI 上增加切换 Tab**（放在剧本内容区域顶部）：
+
+```tsx
+<div className="flex items-center gap-2 mb-4 border-b border-gray-800 pb-2">
+  <button
+    onClick={() => setDisplayMode('ai')}
+    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+      displayMode === 'ai' 
+        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' 
+        : 'text-gray-400 hover:text-gray-300'
+    }`}
+  >
+    <Sparkles className="w-3.5 h-3.5 inline mr-1" />
+    AI生成版
+    {aiGenerated && <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />}
+  </button>
+  
+  <button
+    onClick={() => setDisplayMode('manual')}
+    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+      displayMode === 'manual' 
+        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' 
+        : 'text-gray-400 hover:text-gray-300'
+    }`}
+  >
+    <Edit3 className="w-3.5 h-3.5 inline mr-1" />
+    手动编辑
+    {manualEdit && <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block" />}
+  </button>
+
+  {aiGenerated && manualEdit && (
+    <button
+      onClick={() => setDisplayMode('diff')}
+      className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+        displayMode === 'diff' 
+          ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' 
+          : 'text-gray-400 hover:text-gray-300'
+      }`}
+    >
+      <GitCompare className="w-3.5 h-3.5 inline mr-1" />
+      对比
+    </button>
+  )}
+</div>
+
+{/* 文本编辑区 */}
+<<textarea
+  value={displayContent}
+  onChange={(e) => {
+    if (displayMode === 'manual') {
+      setManualEdit(e.target.value);
+    }
+    // AI模式下禁止直接编辑，提示切换到手動模式
+  }}
+  disabled={displayMode === 'ai'}
+  className="w-full h-[60vh] bg-gray-900/50 border border-gray-800 rounded-lg p-4 text-gray-300 resize-none focus:outline-none focus:border-cyan-500/50 disabled:opacity-60"
+  placeholder={displayMode === 'ai' ? "AI生成内容不可直接编辑，点击「手动编辑」切换" : "在此输入或粘贴剧本内容..."}
+/>
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 功能测试
+# 步骤：在剧本编辑页手动输入内容 → 点击AI生成 → 生成完成后
+# 预期：手动输入内容不丢失，顶部出现"AI生成版/手动编辑"切换Tab，默认停留在手动编辑页
+
+# 3. 切换测试
+# 点击"AI生成版" → 显示AI内容；点击"手动编辑" → 显示之前手输内容
+# 预期：两个版本内容独立保存，互不覆盖
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-fix-1>
+```
+
+---
+
+### 任务 P-Fix-2：修复统计信息组件
+
+**问题描述**：
+- 截图显示 `共1集 0` + 单独一行 `0`，布局崩坏
+- 字数统计用 `.length` 对中文不准确（1汉字≠1 token，但应算1字符）
+- 集数解析靠 `"第"` 字符分割，如果剧本内容里有"第一次"会误统计
+- 没有单位标签，用户看不懂数字含义
+
+**修复步骤**：
+
+找到统计组件（通常在剧本编辑页底部或侧边栏），替换为：
+
+```typescript
+// 准确统计函数
+function countChineseChars(text: string): number {
+  if (!text) return 0;
+  // 中文字符 + 中文标点都算1个字符，英文按单词或字符视产品需求
+  // 这里采用：所有非空白字符都计数（最符合用户直觉）
+  return text.replace(/\s/g, '').length;
+}
+
+function countEpisodes(scriptData: any): number {
+  if (!scriptData) return 0;
+  // 优先从结构化数据读取
+  if (scriptData.episodes && Array.isArray(scriptData.episodes)) {
+    return scriptData.episodes.length;
+  }
+  if (scriptData.outline && Array.isArray(scriptData.outline)) {
+    return scriptData.outline.length;
+  }
+  // 降级：从文本中正则匹配"第X集"（X为数字）
+  if (typeof scriptData === 'string') {
+    const matches = scriptData.match(/第\s*(\d+)\s*集/g);
+    return matches ? new Set(matches).size : 0;
+  }
+  return 0;
+}
+
+function countScenes(scriptData: any): number {
+  if (!scriptData) return 0;
+  if (scriptData.episodes && Array.isArray(scriptData.episodes)) {
+    return scriptData.episodes.reduce((sum: number, ep: any) => {
+      return sum + (ep.scenes?.length || 0);
+    }, 0);
+  }
+  // 降级：匹配"场景"或"景"关键词（粗略）
+  if (typeof scriptData === 'string') {
+    const matches = scriptData.match(/场景\s*\d+|内景|外景/g);
+    return matches ? matches.length : 0;
+  }
+  return 0;
+}
+```
+
+**UI 渲染修复**：
+
+```tsx
+<div className="flex items-center gap-4 text-xs text-gray-500 mt-4 px-2">
+  <div className="flex items-center gap-1.5">
+    <BookOpen className="w-3.5 h-3.5 text-gray-600" />
+    <span className="text-gray-400">集数：</span>
+    <span className="text-cyan-400 font-medium tabular-nums">{countEpisodes(script)}</span>
+  </div>
+  
+  <div className="w-px h-3 bg-gray-800" />
+  
+  <div className="flex items-center gap-1.5">
+    <FileText className="w-3.5 h-3.5 text-gray-600" />
+    <span className="text-gray-400">场景：</span>
+    <span className="text-cyan-400 font-medium tabular-nums">{countScenes(script)}</span>
+  </div>
+  
+  <div className="w-px h-3 bg-gray-800" />
+  
+  <div className="flex items-center gap-1.5">
+    <Type className="w-3.5 h-3.5 text-gray-600" />
+    <span className="text-gray-400">字数：</span>
+    <span className="text-cyan-400 font-medium tabular-nums">
+      {countChineseChars(displayContent).toLocaleString()}
+    </span>
+  </div>
+</div>
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 预期：底部显示"集数：3 | 场景：12 | 字数：1,234"，无悬空数字，无布局崩坏
+
+# 3. 准确性测试
+# 输入包含"第一次相遇"的文本
+# 预期：集数不因此+1，只有"第1集""第2集"才计数
+
+# 4. 中文测试
+# 输入"你好世界"
+# 预期：字数显示4（不是8）
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-fix-2>
+```
+
+---
+
+### 任务 P-Fix-3：统一功能入口（AI对话 vs 从创意生成剧本）
+
+**问题描述**：
+- 左侧有"AI对话"，右侧有"从创意生成剧本"，两个入口调用同一 API
+- 用户不知道点哪个，认知负担高
+
+**修复步骤**：
+
+找到剧本生成入口组件，合并为单一主入口：
+
+```tsx
+// ❌ 删除分散的入口，保留一个主区域
+
+<div className="space-y-4">
+  {/* 统一入口：创意输入 + 生成按钮 */}
+  <div className="space-y-3">
+    <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+      <Sparkles className="w-4 h-4 text-cyan-400" />
+      AI智创剧本
+    </label>
+    
+    <textarea
+      value={creativeInput}
+      onChange={(e) => setCreativeInput(e.target.value)}
+      placeholder="输入一句话创意，例如：一个被家族抛弃的女孩，凭借设计天赋逆袭成为时尚女王..."
+      className="w-full h-24 bg-gray-900/50 border border-gray-800 rounded-lg p-3 text-sm text-gray-300 placeholder:text-gray-600 focus:outline-none focus:border-cyan-500/50 resize-none"
+    />
+    
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3 text-xs text-gray-500">
+        <span>目标集数：</span>
+        <input
+          type="number"
+          value={targetEpisodes}
+          onChange={(e) => setTargetEpisodes(Number(e.target.value))}
+          className="w-16 bg-gray-900 border border-gray-800 rounded px-2 py-1 text-center text-gray-300 focus:outline-none focus:border-cyan-500/50"
+          min={3}
+          max={120}
+        />
+        <span>集</span>
+      </div>
+      
+      <button
+        onClick={handleGenerate}
+        disabled={isGenerating || !creativeInput.trim()}
+        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+      >
+        {isGenerating ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            生成中...
+          </>
+        ) : (
+          <>
+            <Wand2 className="w-4 h-4" />
+            生成剧本
+          </>
+        )}
+      </button>
+    </div>
+  </div>
+
+  {/* 二次优化入口（基于当前剧本上下文） */}
+  {script && (
+    <div className="pt-3 border-t border-gray-800">
+      <button
+        onClick={() => setShowOptimizeDialog(true)}
+        className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 transition-colors"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        对当前剧本进行AI优化/续写
+      </button>
+    </div>
+  )}
+</div>
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 预期：页面上只有一个主生成区域（创意输入框+生成按钮），原"AI对话"和"从创意生成剧本"合并
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-fix-3>
+```
+
+---
+
+### 任务 P-Fix-4：生成按钮添加 loading / 禁用 / 进度状态
+
+**问题描述**：
+- 点击"生成剧本"后，按钮无变化，用户不知道是否点击成功
+- 可能重复提交，导致多次 API 调用
+- 配合 P2-8 的三阶段进度，但按钮本身没有状态反馈
+
+**修复步骤**：
+
+已在 P-Fix-3 的代码中包含 `isGenerating` 状态和禁用逻辑，这里补充全局生成状态管理和防重复提交：
+
+```typescript
+// 在组件中增加
+const [isGenerating, setIsGenerating] = useState(false);
+const [generationError, setGenerationError] = useState<string | null>(null);
+
+const handleGenerate = async () => {
+  if (isGenerating || !creativeInput.trim()) return;
+  
+  setIsGenerating(true);
+  setGenerationError(null);
+  setGenerationStage('idle'); // P2-8相关state
+  
+  try {
+    const response = await fetch('/api/ai/generate-full-script', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: creativeInput,
+        genre,
+        tone,
+        totalEpisodes: targetEpisodes,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || '生成失败');
+    }
+
+    // SSE流处理（P2-8逻辑）
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      // ...P2-8的SSE解析逻辑...
+    }
+    
+  } catch (error) {
+    setGenerationError(error instanceof Error ? error.message : '生成失败，请重试');
+  } finally {
+    setIsGenerating(false);
+  }
+};
+```
+
+**错误提示 UI**：
+
+```tsx
+{generationError && (
+  <div className="mt-3 p-3 rounded-lg bg-red-950/30 border border-red-900/50 flex items-start gap-2">
+    <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+    <div className="text-xs text-red-400">{generationError}</div>
+  </div>
+)}
+```
+
+**验收标准**：
+```bash
+# 1. 功能测试
+# 点击生成按钮
+# 预期：按钮立即禁用，显示"生成中..."+转圈动画，无法再次点击
+
+# 2. 错误测试
+# 断开网络后点击生成
+# 预期：按钮恢复可点击，下方显示红色错误提示"生成失败，请重试"
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-fix-4>
+```
+
+---
+
+### 任务 P-Fix-5：修复左侧导航与右侧内容状态不同步
+
+**问题描述**：
+- 左侧导航高亮"剧本预览"，但右侧标题是"剧本编辑"，且内容区是编辑文本框
+- 路由与状态不同步，用户不知道自己"在哪"
+
+**修复步骤**：
+
+找到导航组件（通常是 `src/components/sidebar.tsx` 或 `src/app/layout.tsx` 中的导航）：
+
+```typescript
+import { usePathname } from 'next/navigation';
+
+// 严格路由匹配
+const navItems = [
+  { path: '/scripts', label: '剧本管理', icon: BookOpen },
+  { path: '/scripts/new', label: '新建剧本', icon: Plus },
+  { path: '/scripts/[id]/edit', label: '剧本编辑', icon: Edit3, pattern: /^\/scripts\/[^/]+\/edit$/ },
+  { path: '/scripts/[id]/preview', label: '剧本预览', icon: Eye, pattern: /^\/scripts\/[^/]+\/preview$/ },
+  { path: '/characters', label: '角色库', icon: Users },
+  { path: '/workspace', label: '工作流画布', icon: Layout },
+];
+
+// 高亮判断
+const isActive = (item: typeof navItems[0]) => {
+  if (item.pattern) return item.pattern.test(pathname);
+  return pathname === item.path || pathname.startsWith(item.path + '/');
+};
+```
+
+**如果当前没有 `/scripts/[id]/preview` 路由，需要新建（只读预览页）**：
+
+创建 `src/app/scripts/[id]/preview/page.tsx`：
+
+```tsx
+'use client';
+
+import { useParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { ScriptReviewCard } from '@/components/script-review-card'; // P-Show-2组件
+
+export default function ScriptPreviewPage() {
+  const { id } = useParams();
+  const [script, setScript] = useState<any>(null);
+
+  useEffect(() => {
+    fetch(`/api/scripts/${id}`).then(r => r.json()).then(setScript);
+  }, [id]);
+
+  if (!script) return <div className="p-8 text-gray-500">加载中...</div>;
+
+  return (
+    <div className="max-w-4xl mx-auto p-8 space-y-6">
+      <h1 className="text-2xl font-bold text-white">{script.title}</h1>
+      <div className="text-gray-400 text-sm">剧本预览（只读）</div>
+      
+      {/* 剧本内容只读展示 */}
+      <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 whitespace-pre-wrap text-gray-300 leading-relaxed">
+        {renderScriptContent(script.content)}
+      </div>
+
+      {/* 评分卡片（P-Show-2） */}
+      <ScriptReviewCard scriptId={id as string} />
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 导航测试
+# 访问 /scripts/123/edit
+# 预期：左侧导航"剧本编辑"高亮，右侧显示编辑页
+
+# 3. 导航测试
+# 访问 /scripts/123/preview
+# 预期：左侧导航"剧本预览"高亮，右侧显示只读预览页+评分卡片
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-fix-5>
+```
+
+---
+
+## 五、功能透出类（7 项）
+
+---
+
+### 任务 P-Show-1：角色详情页添加"表演指令"面板
+
+**透出哪个后台能力**：P2-4 表情动作库 + P3-1 角色圣经
+
+**修改文件**：角色详情页（`src/app/characters/[id]/page.tsx` 或类似）
+
+**在角色详情页增加折叠面板**：
+
+```tsx
+import { useState } from 'react';
+import { ChevronDown, ChevronUp, Smile, Move } from 'lucide-react';
+import { getExpressionList, getActionList, buildExpressionPrompt } from '@/lib/prompt-engineering/expression-library';
+
+export function PerformancePanel({ character }: { character: any }) {
+  const [open, setOpen] = useState(false);
+  const [selectedExpression, setSelectedExpression] = useState('');
+  const [selectedAction, setSelectedAction] = useState('');
+  
+  const expressions = getExpressionList();
+  const actions = getActionList();
+
+  const previewPrompt = selectedExpression && selectedAction 
+    ? buildExpressionPrompt(selectedExpression, selectedAction)
+    : null;
+
+  return (
+    <div className="mt-6 border border-gray-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-4 bg-gray-900/80 hover:bg-gray-900 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Smile className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-medium text-white">表演指令</span>
+          <span className="text-xs text-gray-500">（{expressions.length}种表情 + {actions.length}种动作）</span>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      {open && (
+        <div className="p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400">表情</label>
+              <select
+                value={selectedExpression}
+                onChange={(e) => setSelectedExpression(e.target.value)}
+                className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-cyan-500/50"
+              >
+                <option value="">选择表情...</option>
+                {expressions.map((expr) => (
+                  <option key={expr.key} value={expr.key}>
+                    {expr.name} ({expr.category}) 强度{expr.intensity}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400">动作</label>
+              <select
+                value={selectedAction}
+                onChange={(e) => setSelectedAction(e.target.value)}
+                className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-cyan-500/50"
+              >
+                <option value="">选择动作...</option>
+                {actions.map((act) => (
+                  <option key={act.key} value={act.key}>
+                    {act.name} ({act.category})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {previewPrompt && (
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400">提示词预览（生图/生视频时自动注入）</label>
+              <div className="p-3 bg-gray-950 border border-gray-800 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed">
+                {previewPrompt}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入角色详情页
+# 预期：出现"表演指令"折叠面板，显示"33种表情 + 40+种动作"
+
+# 3. 交互测试
+# 选择表情"愤怒" + 动作"握拳"
+# 预期：下方提示词预览区自动显示 "angry expression, clenching fist..." 专业术语
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-1>
+```
+
+---
+
+### 任务 P-Show-2：剧本预览页五维度评分卡片（修复评分失败）
+
+**透出哪个后台能力**：P2-3 `review-script` API
+
+**修改文件**：剧本预览组件 + 新建 `src/components/script-review-card.tsx`
+
+**核心问题排查**（评分失败可能原因）：
+
+```typescript
+// 在 ScriptReviewCard 组件中，排查以下问题：
+
+useEffect(() => {
+  const fetchReview = async () => {
+    try {
+      // ❌ 可能错误1：API路径错误
+      // const res = await fetch('/api/review-script'); 
+      // ✅ 正确路径：
+      const res = await fetch('/api/ai/review-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // ❌ 可能错误2：参数格式与API预期不一致
+          // 必须传递 episodes 数组或 script 字符串
+          episodes: script.episodes || [],
+          characters: script.characters || [],
+          // outline 和 paywallEpisodes 可选
+        }),
+      });
+
+      if (!res.ok) {
+        // 详细记录错误，方便排查
+        const errorData = await res.json().catch(() => ({}));
+        console.error('Review API error:', res.status, errorData);
+        setError(`评分失败：${errorData.error || res.statusText} (${errorData.code || 'UNKNOWN'})`);
+        return;
+      }
+
+      const data = await res.json();
+      setReview(data);
+    } catch (err) {
+      setError(`评分请求失败：${err instanceof Error ? err.message : '网络错误'}`);
+    }
+  };
+
+  if (script?.episodes?.length > 0) {
+    fetchReview();
+  }
+}, [script]);
+```
+
+**完整评分卡片组件**：
+
+```tsx
+'use client';
+
+import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronUp, Star, AlertCircle, CheckCircle2, TrendingUp, Loader2 } from 'lucide-react';
+
+interface ReviewData {
+  rhythm: number;
+  satisfaction: number;
+  dialogue: number;
+  format: number;
+  continuity: number;
+  total: number;
+  rating: string;
+  highlights?: string[];
+  issues?: Array<<{
+    level: string;
+    dimension: string;
+    description: string;
+    suggestion: string;
+    episodeNumber?: number;
+    sceneNumber?: number;
+  }>;
+  revisionPriority?: Array<<{
+    priority: number;
+    issue: string;
+    reason: string;
+  }>;
+}
+
+export function ScriptReviewCard({ scriptId }: { scriptId: string }) {
+  const [review, setReview] = useState<<ReviewData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const fetchReview = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // 先获取剧本数据
+      const scriptRes = await fetch(`/api/scripts/${scriptId}`);
+      if (!scriptRes.ok) throw new Error('获取剧本失败');
+      const script = await scriptRes.json();
+
+      // 调用评分API
+      const res = await fetch('/api/ai/review-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          episodes: script.episodes || [],
+          characters: script.characters || [],
+          outline: script.outline,
+          paywallEpisodes: script.paywallEpisodes,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `API错误 ${res.status}`);
+      }
+
+      const data = await res.json();
+      
+      // 验证数据完整性
+      if (typeof data.total !== 'number' || !data.rating) {
+        throw new Error('评分数据格式异常');
+      }
+      
+      setReview(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '评分加载失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReview();
+  }, [scriptId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 p-4 text-xs text-gray-500">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        正在分析剧本质量...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 rounded-lg bg-red-950/30 border border-red-900/50">
+        <div className="flex items-center gap-2 text-xs text-red-400 mb-2">
+          <AlertCircle className="w-4 h-4" />
+          评分加载失败
+        </div>
+        <div className="text-xs text-gray-500 mb-3">{error}</div>
+        <button
+          onClick={fetchReview}
+          className="text-xs px-3 py-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+        >
+          重试
+        </button>
+      </div>
+    );
+  }
+
+  if (!review) return null;
+
+  const scoreColor = review.total >= 45 ? 'text-green-400' :
+                     review.total >= 38 ? 'text-blue-400' :
+                     review.total >= 30 ? 'text-yellow-400' :
+                     review.total >= 25 ? 'text-orange-400' : 'text-red-400';
+
+  const scoreBg = review.total >= 45 ? 'bg-green-500/20' :
+                  review.total >= 38 ? 'bg-blue-500/20' :
+                  review.total >= 30 ? 'bg-yellow-500/20' :
+                  review.total >= 25 ? 'bg-orange-500/20' : 'bg-red-500/20';
+
+  return (
+    <div className="mt-6 border border-gray-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-4 bg-gray-900/80 hover:bg-gray-900 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${scoreBg} ${scoreColor}`}>
+            {review.total}
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-medium text-white">
+              剧本质量评分
+              <span className={`ml-2 px-2 py-0.5 rounded text-xs ${scoreBg} ${scoreColor}`}>
+                {review.rating}
+              </span>
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {review.total >= 45 ? '可直接投流，具备爆款潜质' :
+               review.total >= 38 ? '质量优秀，微调后可投流' :
+               review.total >= 30 ? '基本可用，需针对性修改' :
+               review.total >= 25 ? '问题较多，需大幅修改' : '建议重新创作'}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {review.issues && review.issues.length > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400">
+              {review.issues.length} 个问题
+            </span>
+          )}
+          {open ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="p-4 space-y-4 border-t border-gray-800">
+          {/* 五维度条形图 */}
+          <div className="space-y-3">
+            {[
+              { key: 'rhythm', label: '节奏', icon: TrendingUp, color: 'bg-cyan-400' },
+              { key: 'satisfaction', label: '爽点', icon: Star, color: 'bg-yellow-400' },
+              { key: 'dialogue', label: '台词', icon: MessageSquare, color: 'bg-purple-400' },
+              { key: 'format', label: '格式', icon: FileText, color: 'bg-blue-400' },
+              { key: 'continuity', label: '连贯', icon: CheckCircle2, color: 'bg-green-400' },
+            ].map(({ key, label, icon: Icon, color }) => {
+              const score = review[key as keyof ReviewData] as number;
+              return (
+                <div key={key} className="flex items-center gap-3">
+                  <Icon className="w-4 h-4 text-gray-500 shrink-0" />
+                  <div className="w-12 text-xs text-gray-400 shrink-0">{label}</div>
+                  <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                    <div className={`h-full ${color} rounded-full transition-all duration-700`} style={{ width: `${score * 10}%` }} />
+                  </div>
+                  <div className={`w-8 text-xs font-medium text-right ${score >= 8 ? 'text-green-400' : score >= 6 ? 'text-yellow-400' : score >= 4 ? 'text-orange-400' : 'text-red-400'}`}>
+                    {score}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 亮点 */}
+          {review.highlights && review.highlights.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-green-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                亮点
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {review.highlights.map((highlight, i) => (
+                  <span key={i} className="text-xs px-2 py-1 rounded bg-green-500/10 text-green-400 border border-green-500/20">
+                    {highlight}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 问题清单 */}
+          {review.issues && review.issues.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-red-400 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5" />
+                待优化问题
+              </div>
+              <div className="space-y-2">
+                {review.issues.map((issue, i) => (
+                  <div key={i} className="p-3 rounded bg-gray-900/50 border border-gray-800 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        issue.level === '阻断' ? 'bg-red-500/20 text-red-400' :
+                        issue.level === '建议' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-blue-500/20 text-blue-400'
+                      }`}>
+                        {issue.level}
+                      </span>
+                      <span className="text-xs text-gray-400">{issue.dimension}</span>
+                    </div>
+                    <div className="text-sm text-gray-300">{issue.description}</div>
+                    <div className="text-xs text-gray-500">
+                      <span className="text-cyan-400">建议：</span>{issue.suggestion}
+                    </div>
+                    {(issue.episodeNumber || issue.sceneNumber) && (
+                      <div className="text-xs text-gray-600">
+                        位置：{issue.episodeNumber ? `第${issue.episodeNumber}集` : ''}
+                        {issue.sceneNumber ? ` 场景${issue.sceneNumber}` : ''}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 修订优先级 */}
+          {review.revisionPriority && review.revisionPriority.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-cyan-400">修订优先级</div>
+              <div className="space-y-1.5">
+                {review.revisionPriority.map((item, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0 font-medium">
+                      {i + 1}
+                    </span>
+                    <div className="text-gray-400">
+                      <div className="text-gray-300">{item.issue}</div>
+                      <div className="text-gray-500 mt-0.5">{item.reason}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 功能测试（核心修复点）
+# 进入剧本预览页 /scripts/123/preview
+# 预期：评分卡片自动加载，显示总分（如35分）和评级（如"合格"）
+
+# 3. 排查评分失败
+# 如果仍显示"评分失败"：
+# - 打开浏览器F12 → Network → 查看 /api/ai/review-script 请求
+# - 预期：返回200，JSON包含 rhythm/satisfaction/dialogue/format/continuity/total/rating
+# - 如果返回404：检查API路由文件是否存在 src/app/api/ai/review-script/route.ts
+# - 如果返回500：检查后端日志，可能是 safeJsonParse 或 zod schema 验证失败
+
+# 4. 交互测试
+# 点击评分卡片展开
+# 预期：显示5个维度条形图、亮点标签、问题清单、修订优先级
+
+# 5. 重试测试
+# 模拟网络错误后点击"重试"
+# 预期：重新加载评分
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-2>
+```
+
+---
+
+### 任务 P-Show-3：视频生成页添加"影视指令"折叠面板
+
+**透出哪个后台能力**：P2-5 影视级提示词模板（SkyReels FPS-24 + 景别/运镜/灯光/构图/氛围）
+
+**修改文件**：视频生成页组件
+
+```tsx
+import { useState } from 'react';
+import { ChevronDown, ChevronUp, Film, Camera, Lightbulb, Grid3x3, Palette } from 'lucide-react';
+import { 
+  SHOT_TYPES, CAMERA_MOVEMENTS, LIGHTING_SETUPS, COMPOSITIONS, MOODS,
+  recommendPreset, buildPresetPrompt 
+} from '@/lib/prompt-engineering/video-prompt';
+
+export function CinematicPanel({ onConfigChange }: { onConfigChange: (config: any) => void }) {
+  const [open, setOpen] = useState(false);
+  const [preset, setPreset] = useState('');
+  const [shotType, setShotType] = useState('MEDIUM_SHOT');
+  const [cameraMovement, setCameraMovement] = useState('STATIC');
+  const [lighting, setLighting] = useState('THREE_POINT');
+  const [composition, setComposition] = useState('RULE_OF_THIRDS');
+  const [mood, setMood] = useState('TENSE');
+
+  const applyPreset = (p: string) => {
+    setPreset(p);
+    // 自动填充预设参数
+    // ...根据CINEMATIC_PRESETS设置各项
+    onConfigChange({ preset: p, shotType, cameraMovement, lighting, composition, mood });
+  };
+
+  return (
+    <div className="mt-4 border border-gray-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-3 bg-gray-900/80 hover:bg-gray-900 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Film className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-medium text-white">影视指令</span>
+          <span className="text-xs text-gray-500">（SkyReels专业参数）</span>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      {open && (
+        <div className="p-4 space-y-4">
+          {/* 场景预设 */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400">场景预设</label>
+            <div className="flex flex-wrap gap-2">
+              {['dramatic_confrontation', 'romantic_encounter', 'action_chase', 'emotional_monologue', 'villain_reveal', 'celebration'].map((p) => (
+                <button
+                  key={p}
+                  onClick={() => applyPreset(p)}
+                  className={`px-3 py-1.5 rounded text-xs border transition-colors ${
+                    preset === p 
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400' 
+                      : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700'
+                  }`}
+                >
+                  {p.replace(/_/g, ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 flex items-center gap-1">
+                <Camera className="w-3 h-3" /> 景别
+              </label>
+              <select value={shotType} onChange={(e) => setShotType(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300">
+                {Object.entries(SHOT_TYPES).map(([key, val]) => (
+                  <option key={key} value={key}>{val.name} - {val.english}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 flex items-center gap-1">
+                <Move className="w-3 h-3" /> 运镜
+              </label>
+              <select value={cameraMovement} onChange={(e) => setCameraMovement(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300">
+                {Object.entries(CAMERA_MOVEMENTS).map(([key, val]) => (
+                  <option key={key} value={key}>{val.name} - {val.english}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 flex items-center gap-1">
+                <Lightbulb className="w-3 h-3" /> 灯光
+              </label>
+              <select value={lighting} onChange={(e) => setLighting(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300">
+                {Object.entries(LIGHTING_SETUPS).map(([key, val]) => (
+                  <option key={key} value={key}>{val.name} - {val.english}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 flex items-center gap-1">
+                <Grid3x3 className="w-3 h-3" /> 构图
+              </label>
+              <select value={composition} onChange={(e) => setComposition(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm text-gray-300">
+                {Object.entries(COMPOSITIONS).map(([key, val]) => (
+                  <option key={key} value={key}>{val.name} - {val.english}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400 flex items-center gap-1">
+              <Palette className="w-3 h-3" /> 氛围
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(MOODS).map(([key, val]) => (
+                <button
+                  key={key}
+                  onClick={() => setMood(key)}
+                  className={`px-2 py-1 rounded text-xs border transition-colors ${
+                    mood === key 
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400' 
+                      : 'border-gray-800 bg-gray-900 text-gray-400'
+                  }`}
+                >
+                  {val.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 bg-gray-950 border border-gray-800 rounded text-xs text-gray-500 font-mono">
+            提示词将以 "FPS-24, {shotType}, {cameraMovement}, {lighting}, {composition}, {mood}..." 开头
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入视频生成页
+# 预期：出现"影视指令"折叠面板，包含6个场景预设按钮、景别/运镜/灯光/构图下拉框、氛围选择标签
+
+# 3. 交互测试
+# 选择"告白"场景预设
+# 预期：自动填充 romantic_encounter 参数（medium_close_up, orbit_clockwise, golden_hour_warm 等）
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-3>
+```
+
+---
+
+### 任务 P-Show-4：生图页添加"角色一致性"开关
+
+**透出哪个后台能力**：P3-1 角色圣经 + P3-4 一致性锚点自动注入
+
+**修改文件**：生图页组件
+
+```tsx
+import { useState, useEffect } from 'react';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Shield } from 'lucide-react';
+
+export function ConsistencySwitch({ 
+  projectId, 
+  characterIds, 
+  onToggle 
+}: { 
+  projectId: string; 
+  characterIds: string[]; 
+  onToggle: (enabled: boolean, selectedCharacters: string[]) => void;
+}) {
+  const [enabled, setEnabled] = useState(false);
+  const [characters, setCharacters] = useState<any[]>([]);
+  const [selectedChars, setSelectedChars] = useState<string[]>(characterIds || []);
+
+  useEffect(() => {
+    // 加载项目角色列表
+    fetch(`/api/projects/${projectId}/characters`)
+      .then(r => r.json())
+      .then(data => setCharacters(data.characters || []));
+  }, [projectId]);
+
+  return (
+    <div className="flex items-start gap-3 p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+      <Switch
+        id="consistency-mode"
+        checked={enabled}
+        onCheckedChange={(checked) => {
+          setEnabled(checked);
+          onToggle(checked, selectedChars);
+        }}
+      />
+      <div className="flex-1 space-y-1">
+        <Label htmlFor="consistency-mode" className="text-sm font-medium text-white flex items-center gap-2 cursor-pointer">
+          <Shield className="w-4 h-4 text-cyan-400" />
+          角色一致性
+        </Label>
+        <p className="text-xs text-gray-500">
+          开启后自动注入角色圣经中的一致性锚点，确保同角色多图不"变脸"
+        </p>
+
+        {enabled && characters.length > 0 && (
+          <div className="pt-2 flex flex-wrap gap-2">
+            {characters.map((char) => (
+              <button
+                key={char.id}
+                onClick={() => {
+                  const newSelection = selectedChars.includes(char.id)
+                    ? selectedChars.filter(id => id !== char.id)
+                    : [...selectedChars, char.id];
+                  setSelectedChars(newSelection);
+                  onToggle(enabled, newSelection);
+                }}
+                className={`px-2 py-1 rounded text-xs border transition-colors ${
+                  selectedChars.includes(char.id)
+                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                    : 'border-gray-800 bg-gray-950 text-gray-500'
+                }`}
+              >
+                {char.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {enabled && characters.length === 0 && (
+          <div className="text-xs text-yellow-400 pt-1">
+            项目中暂无角色，请先提取角色
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入生图页
+# 预期：出现"角色一致性"开关，关闭时灰色，开启后显示项目角色列表（可多选）
+
+# 3. API测试
+# 开启开关，选择角色"林婉儿"，提交生图
+# 预期：POST /api/ai/generate-image 的payload包含 characterIds:["char-xxx"]，返回的prompt字段包含角色一致性锚点描述
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-4>
+```
+
+---
+
+### 任务 P-Show-5：剧本生成页添加"创作模式"选择器
+
+**透出哪个后台能力**：P2-1 8份知识库 + P2-7 按需加载（System Prompt自动加载对应知识库）
+
+**修改文件**：剧本生成页（与 P-Fix-3 同一区域）
+
+```tsx
+const GENRE_MODES = [
+  { key: '都市甜宠', icon: Heart, color: 'text-pink-400', desc: '双向奔赴、日常撒糖' },
+  { key: '都市逆袭', icon: TrendingUp, color: 'text-cyan-400', desc: '底层崛起、打脸逆袭' },
+  { key: '悬疑推理', icon: Search, color: 'text-purple-400', desc: '谜团、线索、反转' },
+  { key: '古风穿越', icon: Crown, color: 'text-yellow-400', desc: '穿越、权谋、逆袭' },
+  { key: '复仇爽剧', icon: Sword, color: 'text-red-400', desc: '隐忍、布局、复仇' },
+  { key: '霸道总裁', icon: Building2, color: 'text-blue-400', desc: '权力不对等、追妻火葬场' },
+  { key: 'custom', icon: Settings, color: 'text-gray-400', desc: '自定义参数' },
+];
+
+// 在生成表单中增加模式选择
+<div className="space-y-3">
+  <label className="text-sm font-medium text-gray-300">创作模式</label>
+  <div className="grid grid-cols-3 gap-2">
+    {GENRE_MODES.map((mode) => (
+      <button
+        key={mode.key}
+        onClick={() => setSelectedMode(mode.key)}
+        className={`p-3 rounded-lg border text-left transition-colors ${
+          selectedMode === mode.key
+            ? 'border-cyan-500/50 bg-cyan-500/10'
+            : 'border-gray-800 bg-gray-900 hover:border-gray-700'
+        }`}
+      >
+        <mode.icon className={`w-5 h-5 ${mode.color} mb-1.5`} />
+        <div className="text-xs font-medium text-gray-300">{mode.key}</div>
+        <div className="text-[10px] text-gray-500 mt-0.5">{mode.desc}</div>
+      </button>
+    ))}
+  </div>
+
+  {selectedMode !== 'custom' && (
+    <div className="flex items-center gap-2 text-xs text-green-400">
+      <CheckCircle2 className="w-3.5 h-3.5" />
+      已加载 {mode.key} 创作方法论（节奏曲线 + 钩子设计 + 爽感矩阵）
+    </div>
+  )}
+</div>
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入剧本生成页
+# 预期：出现6个创作模式卡片（甜宠/逆袭/悬疑/古风/复仇/总裁），选中后显示绿色"已加载..."
+
+# 3. API验证
+# 选择"都市逆袭"模式生成剧本
+# 预期：后端日志显示 knowledgeTokens 约3000-5000，System Prompt 加载了 genreGuide + rhythmCurve + openingRules
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-5>
+```
+
+---
+
+### 任务 P-Show-6：分镜表格添加"提示词预览"折叠
+
+**透出哪个后台能力**：P2-6 3层提示词融合（动作层/摄影层/风格层）
+
+**修改文件**：分镜表格组件
+
+```tsx
+import { useState } from 'react';
+import { ChevronDown, ChevronUp, Layers } from 'lucide-react';
+
+export function ShotPromptPreview({ shot }: { shot: any }) {
+  const [open, setOpen] = useState(false);
+
+  // 假设 shot 包含 fusedPrompt 或从 shot 数据构建
+  const layers = shot.fusedPrompt || {
+    actionLayer: shot.actionDescription || '暂无动作层',
+    cameraLayer: shot.cameraConfig || '暂无摄影层',
+    styleLayer: shot.styleConfig || '暂无风格层',
+  };
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+      >
+        <Layers className="w-3.5 h-3.5" />
+        提示词预览
+        {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-2 p-3 bg-gray-950 border border-gray-800 rounded text-xs font-mono">
+          <div className="space-y-1">
+            <div className="text-cyan-400 font-medium">[动作层]</div>
+            <div className="text-gray-400 whitespace-pre-wrap">{layers.actionLayer}</div>
+          </div>
+          <div className="h-px bg-gray-800" />
+          <div className="space-y-1">
+            <div className="text-purple-400 font-medium">[摄影层]</div>
+            <div className="text-gray-400 whitespace-pre-wrap">{layers.cameraLayer}</div>
+          </div>
+          <div className="h-px bg-gray-800" />
+          <div className="space-y-1">
+            <div className="text-green-400 font-medium">[风格层]</div>
+            <div className="text-gray-400 whitespace-pre-wrap">{layers.styleLayer}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入分镜表格页
+# 预期：每行分镜出现"提示词预览"折叠按钮，展开后显示三段结构（动作层/摄影层/风格层）
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-6>
+```
+
+---
+
+### 任务 P-Show-7：工作流画布节点动态状态徽章
+
+**透出哪个后台能力**：P1-6 组件拆分后的节点状态管理
+
+**修改文件**：工作流画布节点组件（`src/components/workspace/nodes/*.tsx`）
+
+在所有节点组件（ScriptNode/ImageNode/VideoNode 等）中统一增加状态徽章：
+
+```tsx
+// 在节点右上角增加状态指示器
+<div className="absolute -top-2 -right-2">
+  {data.status === 'running' && (
+    <div className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-500/50 flex items-center justify-center">
+      <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+    </div>
+  )}
+  {data.status === 'completed' && (
+    <div className="w-5 h-5 rounded-full bg-green-500/20 border border-green-500/50 flex items-center justify-center">
+      <CheckCircle2 className="w-3 h-3 text-green-400" />
+    </div>
+  )}
+  {data.status === 'error' && (
+    <div className="w-5 h-5 rounded-full bg-red-500/20 border border-red-500/50 flex items-center justify-center">
+      <AlertCircle className="w-3 h-3 text-red-400" />
+    </div>
+  )}
+  {data.status === 'pending' && (
+    <div className="w-5 h-5 rounded-full bg-gray-700/50 border border-gray-600 flex items-center justify-center">
+      <div className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+    </div>
+  )}
+</div>
+```
+
+**边线流动动画**（在 React Flow 的 edge 配置中）：
+
+```typescript
+// 在 useEdgesState 或边配置中
+const edgeOptions = {
+  animated: true,
+  style: { stroke: '#06b6d4', strokeWidth: 2 },
+  // 运行中的边加流动动画（React Flow默认支持animated）
+};
+```
+
+**验收标准**：
+```bash
+# 1. 构建测试
+pnpm build
+# 预期：0错误
+
+# 2. 视觉测试
+# 进入 /workspace
+# 预期：节点右上角显示状态徽章（pending灰点/running蓝转圈/completed绿勾/error红叉）
+
+# 3. 交互测试
+# 拖拽连接两个节点
+# 预期：边线显示青色流动动画
+```
+
+**回滚命令**：
+```bash
+git revert <commit-hash-of-p-show-7>
+```
+
+---
+
+## 六、P-Fix-Show 验收清单
+
+Phase P-Fix-Show 完成后，你必须提供以下交付物：
+
+### 6.1 代码交付
+```bash
+git diff main...feature/p-fix-show > p-fix-show-diff.patch
+```
+
+### 6.2 测试报告
+
+| # | 测试项 | 操作 | 预期结果 |
+|---|--------|------|---------|
+| 1 | 构建测试 | `pnpm build` | 0错误 |
+| 2 | 解耦state | 在编辑页手动输入 → AI生成 | 手动内容不丢失，出现AI版/手动版切换Tab |
+| 3 | 统计信息 | 查看剧本底部统计 | 显示"集数：X \| 场景：Y \| 字数：Z"，无悬空数字 |
+| 4 | 统一入口 | 查看剧本生成页 | 只有一个"AI智创剧本"输入框+生成按钮 |
+| 5 | 按钮状态 | 点击生成 | 按钮禁用+转圈+文字变"生成中..." |
+| 6 | 导航同步 | 访问 /scripts/123/preview | 左侧"剧本预览"高亮，右侧显示只读预览+评分卡片 |
+| 7 | 表演指令 | 进入角色详情页 | 出现"表演指令"面板，选表情+动作后显示专业提示词 |
+| 8 | 评分卡片 | 进入 /scripts/123/preview | **核心修复**：自动加载评分，显示总分和评级，不再"评分失败" |
+| 9 | 评分展开 | 点击评分卡片 | 展开显示5维度条形图、亮点、问题清单、修订优先级 |
+| 10 | 影视指令 | 进入视频生成页 | 出现"影视指令"面板，可选6种预设、景别、运镜、灯光、构图、氛围 |
+| 11 | 角色一致性 | 进入生图页 | 出现"角色一致性"开关，开启后显示角色多选，生图注入锚点 |
+| 12 | 创作模式 | 进入剧本生成页 | 出现6个创作模式卡片，选中后显示"已加载XX创作方法论" |
+| 13 | 分镜提示词 | 进入分镜表格 | 每行有"提示词预览"折叠，展开显示动作层/摄影层/风格层 |
+| 14 | 画布徽章 | 进入 /workspace | 节点右上角显示状态徽章（灰/蓝/绿/红），边线青色流动 |
+| 15 | 基线保护 | P0-P2全部38项API测试 | 100%通过 |
+
+### 6.3 评分失败专项排查清单
+
+如果 P-Show-2 评分仍失败，按以下顺序排查：
+
+| 步骤 | 检查项 | 命令/操作 | 预期 |
+|------|--------|-----------|------|
+| 1 | API路由存在 | `ls src/app/api/ai/review-script/route.ts` | 文件存在 |
+| 2 | API可访问 | `curl -X POST /api/ai/review-script -d '{}'` | 返回400（参数校验）而非404 |
+| 3 | 参数格式 | 检查前端POST body | 包含 `episodes` 数组 |
+| 4 | 后端日志 | 查看服务端错误日志 | 无 `safeJsonParse` 或 `zod` 报错 |
+| 5 | 数据库连接 | 检查 `alternative_frames` 表 | 不影响评分读取，但需确认表存在 |
+| 6 | 网络面板 | F12 → Network → review-script | Status 200，Response JSON含 total/rating |
+
+### 6.4 构建验证
+```bash
+pnpm install
+pnpm build
+# 必须0错误，0警告
+```
+
+### 6.5 回滚方案
+```bash
+# 代码回滚
+git checkout main
+git branch -D feature/p-fix-show
+# 或
+git reset --hard v0.11.0-script
+```
+
+---
+
+## 七、你现在应该做什么
+
+1. **确认当前分支是 `feature/p-fix-show`**（从main切出）
+2. **按顺序执行 P-Fix-1 → P-Fix-2 → P-Fix-3 → P-Fix-4 → P-Fix-5 → P-Show-1 → P-Show-2 → P-Show-3 → P-Show-4 → P-Show-5 → P-Show-6 → P-Show-7**
+3. **每个任务完成后运行基线功能测试（38项P0-P2 + 15项P-Fix-Show新增）**
+4. **全部完成后提供：diff文件 + 测试报告 + 构建截图 + 回滚命令**
+5. **等待我验收后，再进入P3/P4**
+
+**禁止**：
+- 不要提前做P3的任务
+- 不要在修复P-Fix-1时"顺手"优化其他页面逻辑
+- 不要改变任何现有API路由的接口契约
+- 不要创建新页面路由（只允许在现有page.tsx中增加条件渲染和组件引用）
+
+---
+
+*P-Fix-Show 指令结束。请开始执行。*

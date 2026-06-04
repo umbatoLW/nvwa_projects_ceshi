@@ -1,0 +1,1420 @@
+API 签名用于验证请求者身份并防止请求被篡改。为降低接入成本，推荐您使用火山引擎 SDK，免去签名过程，或使用 API Explorer 了解 API 的签名生成过程。本文介绍了火山引擎 API 的签名过程，帮助您调用云产品 API。
+
+说明
+
+如果在签名生成过程中遇到问题，您可以提交工单或点击页面右下方的在线客服，与火山引擎技术支持沟通。
+
+火山引擎 SDK：火山引擎封装了常见编程语言的 SDK，您可以通过 SDK 直接调用云产品的 API。
+
+API Explorer：如果目前提供的 SDK 无法满足您的需求，您也可以通过 API Explorer 的签名工具模块查看每个 API 的签名生成过程。
+
+您只需输入 Access Key ID、Secret Access Key、Host 等信息，即可生成签名结果和可执行的 curl 命令。
+
+注意
+
+通过该方式生成签名，不会对输入的 Access Key ID、Secret Access Key、Host 做准确性校验，请务必确保信息准确，否则生成的签名将无法正常使用。
+Access Key ID 和 Secret Access Key 为敏感信息，请勿泄露相关数据。获取方法，详见密钥管理。
+Host 即服务地址，例如 billing.volcengineapi.com。您可以查看不同云产品的 API 文档，获取服务地址。
+
+为什么要进行签名？ #
+验证请求者身份：仅允许持有有效访问密钥的请求者调用 API，确保请求合法。
+防止请求被篡改：火山引擎 API 对请求参数进行哈希计算，并将加密哈希值作为请求的一部分发送至火山引擎 API 服务器。服务器接收请求后，对收到的请求参数进行哈希计算，并将计算结果与请求中提供的哈希值进行比对。如果哈希值不一致，则表示请求被篡改，火山引擎 API 将拒绝该请求。
+
+签名机制 #
+
+计算签名的流程如下所示。
+
+由于 GET 和 POST 请求的签名细节存在差异，因此本文分别以 GET 和 POST 请求为例介绍如何计算签名。
+
+GET 请求原始示例
+
+GET https://billing.volcengineapi.com/?Action=QueryBalanceAcct&Version=2022-01-01 HTTP/1.1
+Host: billing.volcengineapi.com
+X-Date: 20250329T180937Z
+
+POST 请求原始示例
+
+Content-Type 为 application/json 时
+POST https://billing.volcengineapi.com/?Action=ListBill&Version=2022-01-01 HTTP/1.1
+Host: billing.volcengineapi.com
+Content-Type: application/json
+X-Date: 20250329T180937Z
+
+{"Limit":10,"BillPeriod":"2023-08"}
+
+Content-Type 为 application/x-www-form-urlencoded 时
+POST https://iam.volcengineapi.com/?Action=CreateLoginProfile&Version=2018-01-01 HTTP/1.1
+Host: iam.volcengineapi.com
+Content-Type: application/x-www-form-urlencoded 
+X-Date: 20240619T071306Z
+
+LoginAllowed=true&Password=123&UserName=%E5%B0%8F%E6%98%8E 
+
+在签名过程中，本文以 Content-Type 为 application/json 为例进行签名结果演示。两种 Content-Type 的签名过程基本相同，仅 RequestPayload 的内容存在差异，详见步骤二。
+
+步骤一：获取访问密钥 #
+
+获取火山引擎账号的访问密钥（Access Key ID 和 Secret Access Key）。具体操作，详见密钥管理。
+本文中，假设 Access Key ID 和 Secret Access Key 分别为 AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg 和 WkRZeE1EQmxPVGhsWWpWak5HVmtNbUUxTXpZeU9UVXlOMlE1TmpZeVlqTQ==。
+
+步骤二：创建规范请求（CanonicalRequest） #
+
+创建规范请求，可以确保您计算出的签名能够与火山引擎计算出的签名相匹配。
+规范请求的伪代码如下所示。
+
+说明
+
+字符串之间请使用换行符分隔。
+
+CanonicalRequest = 
+        HTTPRequestMethod + '\n' + 
+        CanonicalURI + '\n' + 
+        CanonicalQueryString + '\n' + 
+        CanonicalHeaders + '\n' + 
+        SignedHeaders + '\n' + 
+        HexEncode(Hash(RequestPayload))
+
+Go
+名称	描述	GET 请求示例值	POST 请求示例值
+HTTPRequestMethod	HTTP 请求方法，即 GET 或 POST。	GET	POST
+CanonicalURI	规范化 URI，即请求地址的资源路径部分经过编码后的结果。资源路径部分指请求地址中 Host 和查询字符串之间的部分，包含 Host 后的 /，但不包含查询字符串前的 ?。
+火山引擎大部分 API 的 URI 均为 /。如果资源路径部分包含除 / 外的其他内容，则需要使用 UTF-8 字符集按照 RFC3986 规范进行 URL 编码，例如空格会编码为%20。
+
+说明
+
+Host 即服务地址，例如 billing.volcengineapi.com。您可以查看不同云产品的 API 文档，获取服务地址。
+查询字符串为请求地址中问号（?）后的字符串内容。
+	/	/
+CanonicalQueryString	规范化查询字符串。生成方法如下所示：
+使用 UTF-8 字符集按照 RFC3986 规范对查询字符串的每个参数名称和参数值进行 URL 编码，例如空格会编码为%20。
+将参数按照参数名称的 ASCII 升序排序。
+使用等号（=）连接参数名称和参数值。
+多个参数之间使用 & 连接。
+
+说明
+
+查询字符串为请求地址中问号（?）后的字符串内容。
+
+Action=QueryBalanceAcct&Version=2022-01-01	Action=ListBill&Version=2022-01-01
+CanonicalHeaders	规范化请求头，使用换行符（'\n'）分隔各 Header 的名称和值对。伪代码如下所示：
+Lowercase(HeaderName0) + ':' + Trim(HeaderValue) + '\n'
+Lowercase(HeaderName1) + ':' + Trim(HeaderValue) + '\n'
+...
+Lowercase(HeaderNameN) + ':' + Trim(HeaderValue) + '\n'
+
+Lowercase() 指将 Header 名称全部转化为小写。Trim() 指删除 Header 的值前后多余的空格。
+如果请求中存在 host、x-date Header，则必须将其添加到 CanonicalHeaders 中。如果请求中存在其他 Header，可按需将其添加到 CanonicalHeaders 中。在本文中，以将 host 和 x-date Header 添加到 CanonicalHeaders 中为例计算签名。
+生成方法如下所示：
+
+将所有需要签名的 Header 名称转换为小写。
+将 Header 的值去除首尾空格。
+将以上步骤的结果，即 Header 的名称和值，以冒号（:）连接，并在尾部添加换行符，组成规范化请求头。
+
+说明
+
+CanonicalHeaders 和 SignedHeaders 中包含的 Header 名称和顺序需保持一致。
+
+host:billing.volcengineapi.com
+x-date:20250329T180937Z
+
+host:billing.volcengineapi.com
+x-date:20250329T180937Z
+
+SignedHeaders	参与签名的 Header，与 CanonicalHeaders 中包含的 Header 一一对应，用于指明哪些 Header 参与签名计算。伪代码如下所示：
+Lowercase(HeaderName0) + ';' +
+Lowercase(HeaderName1) + ';' +
+...
+Lowercase(HeaderNameN)
+
+说明
+
+代理服务器（Proxy）可能在转发过程中修改 Keep-Alive、Proxy-Authorization 等 Header。为避免签名报错，建议此类 Header 不要参与签名。
+
+Lowercase() 指将 Header 名称全部转化为小写。
+如果请求中存在 host、x-date Header，则必须将其添加到 SignedHeaders 中。如果请求中存在其他 Header，可按需将其添加到 SignedHeaders 中。在本文中，以将 host 和 x-date Header 添加到 SignedHeaders 中为例计算签名。
+生成方法如下所示：
+
+将所有需要签名的 Header 名称转换为小写。
+以分号（;）连接小写的 Header 名称。
+
+说明
+
+CanonicalHeaders 和 SignedHeaders 中包含的 Header 名称和顺序需保持一致。
+
+host;x-date	host;x-date
+RequestPayload	使用 SHA256 作为哈希函数，将 HTTP 请求 Body 中的数据作为哈希函数的输入，计算哈希值，并对哈希值进行小写十六进制编码。
+GET 和 POST 请求的 Body 存在差异。
+GET 请求：由于 GET 请求不包含请求 Body，即 RequestPayload 为空字符串，因此 HexEncode(Hash(RequestPayload)) 的取值固定为 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855。
+POST 请求
+当 Content-Type 为 application/json 时，请求 Body 为传入的 Body 内容。
+在本文的 POST 请求示例中，请求 Body（RequestPayload）为以下内容：
+{"Limit":10,"BillPeriod":"2023-08"}
+则 HexEncode(Hash(RequestPayload)) 的取值为 e8cc56e129d9759d56c936e679a345d001a4235b58bee8e935ccad97f23ed663。
+当 Content-Type 为 application/x-www-form-urlencoded 时，请求 Body 由以下方式生成：
+使用 UTF-8 字符集按照 RFC3986 规范，对请求 Body 中传入的每个参数名称和参数值进行 URL 编码。
+使用等号（=）连接参数名称和参数值。
+多个参数之间使用 & 连接。
+在本文的 POST 请求示例中，请求 Body（RequestPayload）为 LoginAllowed=true&Password=123&UserName=%E5%B0%8F%E6%98%8E，则 HexEncode(Hash(RequestPayload)) 的取值为 541369b65936ae40211b53477308fe31151369c74be5113adbf969a0219523a5。
+
+说明
+
+Hash 指使用 SHA256 算法，HexEncode指对哈希值进行十六进制编码。
+
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	e8cc56e129d9759d56c936e679a345d001a4235b58bee8e935ccad97f23ed663
+
+根据以上规则，在本文示例中，得到的规范请求如下所示。
+
+注意
+
+以下示例中，由于 CanonicalHeaders 本身必须以换行符（\n）结尾，当它与 SignedHeaders 通过另一个换行符（\n）拼接时，两个连续的换行符（\n\n）会自然地形成一个空行。
+
+GET 请求
+
+GET
+/
+Action=QueryBalanceAcct&Version=2022-01-01
+host:billing.volcengineapi.com
+x-date:20250329T180937Z
+
+host;x-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+POST 请求
+
+POST
+/
+Action=ListBill&Version=2022-01-01
+host:billing.volcengineapi.com
+x-date:20250329T180937Z
+
+host;x-date
+e8cc56e129d9759d56c936e679a345d001a4235b58bee8e935ccad97f23ed663
+
+步骤三：创建待签名字符串（StringToSign） #
+
+创建待签名字符串的伪代码如下所示。
+
+说明
+
+字符串之间请使用换行符分隔。
+
+StringToSign =
+        Algorithm + '\n' +
+        RequestDate + '\n' +
+        CredentialScope + '\n' +
+        HexEncode(Hash(CanonicalRequest))
+
+Go
+
+名称
+
+描述
+
+GET 请求示例值
+
+POST 请求示例值
+
+Algorithm
+
+签名算法。目前火山引擎仅支持 HMAC-SHA256 算法。
+
+HMAC-SHA256
+
+HMAC-SHA256
+
+RequestDate
+
+请求发起的时间， 遵循 ISO 8601 格式的 UTC+0 时间，精度为秒。格式为 YYYYMMDD'T'HHMMSS'Z' 。与请求头公共参数 X-Date 的取值相同。
+
+20250329T180937Z
+
+20250329T180937Z
+
+CredentialScope
+
+凭证范围，格式为 {YYYYMMDD}/{region}/{service}/request。
+其中，
+
+{YYYYMMDD}：请求头公共参数 X-Date 中的日期。
+{region}：请求的地域，例如 cn-beijing。当产品按 Region 提供服务时，该参数值为您实际要访问的 Region。如果产品不按 Region 提供服务，该参数值可为任一 Region。
+{service}：请求的服务名，每个产品的服务名不同。您可以查看不同云产品的 API 文档，获取服务名（Service）。例如费用中心的服务名为 billing。
+request：固定取值为 request。
+
+20250329/cn-beijing/billing/request
+
+20250329/cn-beijing/billing/request
+
+CanonicalRequest
+
+使用 SHA256 作为哈希函数，将上一步中创建的规范请求（CanonicalRequest）作为哈希函数的输入，计算哈希值，并对哈希值进行小写十六进制编码。
+
+说明
+
+Hash 指使用 SHA256 算法，HexEncode指对哈希值进行十六进制编码。
+
+43171c1658c64b5db55c58d54988a4598d2d09a5613136beaa5eef40eae6e2c1
+
+27383e3b56d03850f5634483527fbddcbf06cf98de1bc8a6679ef2300bff3b15
+
+根据以上规则，在本文示例中，得到的待签名字符串如下所示。
+
+GET 请求
+
+HMAC-SHA256
+20250329T180937Z
+20250329/cn-beijing/billing/request
+43171c1658c64b5db55c58d54988a4598d2d09a5613136beaa5eef40eae6e2c1
+
+POST 请求
+
+HMAC-SHA256
+20250329T180937Z
+20250329/cn-beijing/billing/request
+27383e3b56d03850f5634483527fbddcbf06cf98de1bc8a6679ef2300bff3b15
+
+步骤四：派生签名密钥（kSigning） #
+
+在计算签名前，需要先使用访问密钥的 Secret Access Key 派生出签名密钥（kSigning）。
+派生签名密钥的伪代码如下所示。
+
+kSecret = Your Secret Access Key
+kDate = HMAC(kSecret, Date)
+kRegion = HMAC(kDate, Region)
+kService = HMAC(kRegion, Service)
+kSigning = HMAC(kService, "request")
+
+Go
+
+以下步骤使用的哈希函数均为 HMAC-SHA256。
+
+说明
+
+此处生成的哈希值实际取值为二进制，但可能包含不可打印的字符，因此以下步骤中均使用转换为十六进制字符串的哈希值。
+
+将 Secret Access Key 作为 String 类型的密钥，将 Date 的取值作为哈希函数的输入。其中，Date 的取值与 CredentialScope 中的 {YYYYMMDD} 部分相同。在本文的 GET 和 POST 请求示例中，Secret Access Key 为 WkRZeE1EQmxPVGhsWWpWak5HVmtNbUUxTXpZeU9UVXlOMlE1TmpZeVlqTQ==，Date 为 20250329，则计算得出的哈希值为 069b1da2ba9c0ecbd8e8aaf2a5742696ebc22f3fe95a649983d31b433ba94ff3。
+
+kDate = HMAC(kSecret, Date)
+
+Go
+
+将上一步的计算结果作为 Hex（十六进制）类型的密钥，将 Region 的取值作为哈希函数的输入。其中，Region 的取值与 CredentialScope 中的 {region} 部分相同。在本文的 GET 和 POST 请求示例中，Region 为 cn-beijing，则计算得出的哈希值为 2f41e8c797f1f0200484c9b0986f89cb371bf44d51e37ca7ad0e12dcbbd83cfd。
+
+kRegion = HMAC(kDate, Region)
+
+Go
+
+将上一步的计算结果作为 Hex（十六进制）类型的密钥，将 Service 的取值作为哈希函数的输入。其中，Service 的取值与 CredentialScope 中的 {service} 部分相同。 在本文的 GET 和 POST 请求示例中，Service 为 billing，则计算得出的哈希值为 2d9caf568d4a1bd052daf42378d281e7f3233c7110dd6849988bd17fd5423777。
+
+kService = HMAC(kRegion, Service)
+
+Go
+
+将上一步的计算结果作为 Hex（十六进制）类型的密钥，将 request 作为哈希函数的输入，则计算得出的哈希值（即最终的派生签名密钥）为 b491ed164936de3bb06c1eb23326aa9587b5aaa6a4e02144b9d523bbebb7ca9f。
+
+kSigning = HMAC(kService, "request")
+
+Go
+
+步骤五：计算签名（Signature） #
+
+计算签名的伪代码如下所示。
+
+Signature = HexEncode(HMAC(kSigning, StringToSign))
+
+Go
+
+将派生签名密钥（kSigning）作为 Hex（十六进制）类型的密钥，将待签名字符串（StringToSign）作为 HMAC-SHA256 哈希函数的输入，并将计算得出的哈希值从二进制转换为十六进制，使用小写字符。在本文示例中，最终的计算结果如下所示。
+
+GET 请求
+
+1eda9e7e6b1728151a8e8791fdaf67cfbd28bd5c80d0fce2eb208746cf483105
+
+POST 请求
+
+5e8480ceea12d0000a23c054151c50dd02c1a7dec835004057d19f13d53a7658
+
+步骤六：将签名添加至请求 #
+
+按需将计算的签名添加至请求的 Header 或 Query 中。推荐添加至请求的 Header 中。
+
+添加至 Header（推荐）
+
+构建 Authorization 请求头，伪代码如下所示。
+
+Authorization: Algorithm Credential={AccessKeyId}/{CredentialScope}, SignedHeaders={SignedHeaders}, Signature={Signature}
+
+Go
+
+名称
+
+描述
+
+GET 请求示例值
+
+POST 请求示例值
+
+Algorithm
+
+签名算法。目前火山引擎仅支持 HMAC-SHA256 算法。
+
+HMAC-SHA256
+
+HMAC-SHA256
+
+AccessKeyId
+
+您访问密钥的 Access Key ID。获取方式，详见步骤一。
+
+AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg
+
+AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg
+
+CredentialScope
+
+凭证范围，详见步骤三。
+
+20250329/cn-beijing/billing/request
+
+20250329/cn-beijing/billing/request
+
+SignedHeaders
+
+参与签名的 Header，详见步骤二。
+
+host;x-date
+
+host;x-date
+
+Signature
+
+计算的签名。详见步骤五。
+
+1eda9e7e6b1728151a8e8791fdaf67cfbd28bd5c80d0fce2eb208746cf483105
+
+5e8480ceea12d0000a23c054151c50dd02c1a7dec835004057d19f13d53a7658
+
+在本文示例中，Authorization 请求头如下所示。
+
+GET 请求
+
+HMAC-SHA256 Credential=AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg/20250329/cn-beijing/billing/request, SignedHeaders=host;x-date, Signature=1eda9e7e6b1728151a8e8791fdaf67cfbd28bd5c80d0fce2eb208746cf483105
+
+POST 请求
+
+HMAC-SHA256 Credential=AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg/20250329/cn-beijing/billing/request, SignedHeaders=host;x-date, Signature=5e8480ceea12d0000a23c054151c50dd02c1a7dec835004057d19f13d53a7658
+
+最终完整的调用信息如下所示。
+
+GET 请求
+
+GET https://billing.volcengineapi.com/?Action=QueryBalanceAcct&Version=2022-01-01 HTTP/1.1
+Authorization: HMAC-SHA256 Credential=AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg/20250329/cn-beijing/billing/request, SignedHeaders=host;x-date, Signature=1eda9e7e6b1728151a8e8791fdaf67cfbd28bd5c80d0fce2eb208746cf483105
+Host: billing.volcengineapi.com
+X-Date: 20250329T180937Z
+
+POST 请求
+
+POST https://billing.volcengineapi.com/?Action=ListBill&Version=2022-01-01 HTTP/1.1
+Host: billing.volcengineapi.com
+Content-Type: application/json
+X-Date: 20250329T180937Z
+Authorization: HMAC-SHA256 Credential=AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg/20250329/cn-beijing/billing/request, SignedHeaders=host;x-date, Signature=5e8480ceea12d0000a23c054151c50dd02c1a7dec835004057d19f13d53a7658
+
+{"Limit":10,"BillPeriod":"2023-08"}
+
+添加至 Query（不推荐）
+
+伪代码如下所示。
+
+X-Algorithm=algorithm&X-Credential=credential&X-Date=date&X-Expires=time&X-SignedHeaders=headers&X-SignedQueries=queries&X-Signature=signature
+
+Go
+
+名称
+
+描述
+
+GET 请求示例值
+
+POST 请求示例值
+
+X-Algorithm
+
+签名算法。目前火山引擎仅支持 HMAC-SHA256 算法。
+
+HMAC-SHA256
+
+HMAC-SHA256
+
+X-Credential
+
+由 {AccessKeyId}/{CredentialScope} 组成。
+
+AccessKeyId：您访问密钥的 Access Key ID。获取方式，详见步骤一。
+CredentialScope：凭证范围，详见步骤三。
+
+在该示例中，您只需将 {AccessKeyId}/{CredentialScope}取值中的 / 转换为 %2F。
+
+AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg%2F20250329%2Fcn-beijing%2Fbilling%2Frequest
+
+AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg%2F20250329%2Fcn-beijing%2Fbilling%2Frequest
+
+X-Date
+
+请求发起的时间，遵循 ISO 8601 格式的 UTC+0 时间，精度为秒。格式为 YYYYMMDD'T'HHMMSS'Z' 。您可在原始请求中找到该参数。
+
+20250329T180937Z
+
+20250329T180937Z
+
+X-Expires
+
+签名的有效时间。该参数可选。默认值为 900，单位为秒。
+
+900
+
+900
+
+X-SignedHeaders
+
+参与签名的 Header，详见步骤二。
+在该示例中，您只需将 SignedHeaders 取值中的分号（;）转换为 %3B。
+
+host%3Bx-date
+
+host%3Bx-date
+
+X-SignedQueries
+
+参与签名的 Query，即步骤二中 CanonicalQueryString 的参数名称。
+请使用 %3B 连接参数名称。
+
+Action%3BVersion
+
+Action%3BVersion
+
+X-Signature
+
+计算的签名。详见步骤五。
+
+1eda9e7e6b1728151a8e8791fdaf67cfbd28bd5c80d0fce2eb208746cf483105
+
+5e8480ceea12d0000a23c054151c50dd02c1a7dec835004057d19f13d53a7658
+
+签名示例 #
+
+在实际调用 API 时，推荐您使用配套的 SDK。SDK 封装了签名过程，开发接入成本更低。目前支持的编程语言有：
+
+Java
+Golang
+Python
+PHP
+Nodejs
+
+以下签名示例以主流编程语言为例，完整实现了上述的签名过程，以便您更清晰地理解签名机制。您可以根据实际情况，结合上述签名过程，按需对签名示例进行改造，从而完成签名。
+
+Java 示例
+Golang 示例
+Python 示例
+PHP 示例
+Node.js 示例
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+/**
+ * Copyright (year) Beijing Volcano Engine Technology Ltd.
+ * <p>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+public class Sign {
+
+private static final BitSet URLENCODER = new BitSet(256);
+
+private static final String CONST_ENCODE = "0123456789ABCDEF";
+    public static final Charset UTF_8 = StandardCharsets.UTF_8;
+
+private final String region;
+    private final String service;
+    private final String schema;
+    private final String host;
+    private final String path;
+    private final String ak;
+    private final String sk;
+
+static {
+        int i;
+        for (i = 97; i <= 122; ++i) {
+            URLENCODER.set(i);
+        }
+
+for (i = 65; i <= 90; ++i) {
+            URLENCODER.set(i);
+        }
+
+for (i = 48; i <= 57; ++i) {
+            URLENCODER.set(i);
+        }
+        URLENCODER.set('-');
+        URLENCODER.set('_');
+        URLENCODER.set('.');
+        URLENCODER.set('~');
+    }
+
+public Sign(String region, String service, String schema, String host, String path, String ak, String sk) {
+        this.region = region;
+        this.service = service;
+        this.host = host;
+        this.schema = schema;
+        this.path = path;
+        this.ak = ak;
+        this.sk = sk;
+    }
+
+public static void main(String[] args) throws Exception {
+        String SecretAccessKey = "****";
+        String AccessKeyID = "AK****";
+        // 请求地址
+        String endpoint = "iam.volcengineapi.com";
+        String path = "/"; // 路径，不包含 Query// 请求接口信息
+        String service = "iam";
+        String region = "cn-beijing";
+        String schema = "https";
+        Sign sign = new Sign(region, service, schema, endpoint, path, AccessKeyID, SecretAccessKey);
+
+String action = "ListPolicies";
+        String version = "2018-01-01";
+
+Date date = new Date();
+        HashMap<String, String> queryMap = new HashMap<>() {{
+            put("Limit", "1");
+        }};
+
+sign.doRequest("POST", queryMap, null, date, action, version);
+    }
+
+public void doRequest(String method, Map<String, String> queryList, byte[] body,
+                          Date date, String action, String version) throws Exception {
+        if (body == null) {
+            body = new byte[0];
+        }
+        String xContentSha256 = hashSHA256(body);
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
+        sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+        String xDate = sdf.format(date);
+        String shortXDate = xDate.substring(0, 8);
+        String contentType = "application/x-www-form-urlencoded";
+
+String signHeader = "host;x-date;x-content-sha256;content-type";
+
+SortedMap<String, String> realQueryList = new TreeMap<>(queryList);
+        realQueryList.put("Action", action);
+        realQueryList.put("Version", version);
+        StringBuilder querySB = new StringBuilder();
+        for (String key : realQueryList.keySet()) {
+            querySB.append(signStringEncoder(key)).append("=").append(signStringEncoder(realQueryList.get(key))).append("&");
+        }
+        querySB.deleteCharAt(querySB.length() - 1);
+
+String canonicalStringBuilder = method + "\n" + path + "\n" + querySB + "\n" +
+                "host:" + host + "\n" +
+                "x-date:" + xDate + "\n" +
+                "x-content-sha256:" + xContentSha256 + "\n" +
+                "content-type:" + contentType + "\n" +
+                "\n" +
+                signHeader + "\n" +
+                xContentSha256;
+
+System.out.println(canonicalStringBuilder);
+
+String hashcanonicalString = hashSHA256(canonicalStringBuilder.getBytes());
+        String credentialScope = shortXDate + "/" + region + "/" + service + "/request";
+        String signString = "HMAC-SHA256" + "\n" + xDate + "\n" + credentialScope + "\n" + hashcanonicalString;
+
+byte[] signKey = genSigningSecretKeyV4(sk, shortXDate, region, service);
+        String signature = HexFormat.of().formatHex(hmacSHA256(signKey, signString));
+
+URL url = new URL(schema + "://" + host + path + "?" + querySB);
+
+HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod(method);
+        conn.setRequestProperty("Host", host);
+        conn.setRequestProperty("X-Date", xDate);
+        conn.setRequestProperty("X-Content-Sha256", xContentSha256);
+        conn.setRequestProperty("Content-Type", contentType);
+        conn.setRequestProperty("Authorization", "HMAC-SHA256" +
+                " Credential=" + ak + "/" + credentialScope +
+                ", SignedHeaders=" + signHeader +
+                ", Signature=" + signature);
+        if (!Objects.equals(conn.getRequestMethod(), "GET")) {
+            conn.setDoOutput(true);
+            OutputStream os = conn.getOutputStream();
+            os.write(body);
+            os.flush();
+            os.close();
+        }
+        conn.connect();
+
+int responseCode = conn.getResponseCode();
+
+InputStream is;
+        if (responseCode == 200) {
+            is = conn.getInputStream();
+        } else {
+            is = conn.getErrorStream();
+        }
+        String responseBody = new String(is.readAllBytes());
+        is.close();
+
+System.out.println(responseCode);
+        System.out.println(responseBody);
+    }
+
+private String signStringEncoder(String source) {
+        if (source == null) {
+            return null;
+        }
+        StringBuilder buf = new StringBuilder(source.length());
+        ByteBuffer bb = UTF_8.encode(source);
+        while (bb.hasRemaining()) {
+            int b = bb.get() & 255;
+            if (URLENCODER.get(b)) {
+                buf.append((char) b);
+            } else if (b == 32) {
+                buf.append("%20");
+            } else {
+                buf.append("%");
+                char hex1 = CONST_ENCODE.charAt(b >> 4);
+                char hex2 = CONST_ENCODE.charAt(b & 15);
+                buf.append(hex1);
+                buf.append(hex2);
+            }
+        }
+
+return buf.toString();
+    }
+
+public static String hashSHA256(byte[] content) throws Exception {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+
+return HexFormat.of().formatHex(md.digest(content));
+        } catch (Exception e) {
+            throw new Exception(
+                    "Unable to compute hash while signing request: "
+                            + e.getMessage(), e);
+        }
+    }
+
+public static byte[] hmacSHA256(byte[] key, String content) throws Exception {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key, "HmacSHA256"));
+            return mac.doFinal(content.getBytes());
+        } catch (Exception e) {
+            throw new Exception(
+                    "Unable to calculate a request signature: "
+                            + e.getMessage(), e);
+        }
+    }
+
+private byte[] genSigningSecretKeyV4(String secretKey, String date, String region, String service) throws Exception {
+        byte[] kDate = hmacSHA256((secretKey).getBytes(), date);
+        byte[] kRegion = hmacSHA256(kDate, region);
+        byte[] kService = hmacSHA256(kRegion, service);
+        return hmacSHA256(kService, "request");
+    }
+}
+/*
+Copyright (year) Beijing Volcano Engine Technology Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package main
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const (
+	// 请求凭证，从访问控制申请
+	AccessKeyID     = "AK****"
+	SecretAccessKey = "****"
+
+// 请求地址
+	Addr = "https://iam.volcengineapi.com"
+	Path = "/" // 路径，不包含 Query
+
+// 请求接口信息
+	Service = "iam"
+	Region  = "cn-beijing"
+	Action  = "ListPolicies"
+	Version = "2018-01-01"
+)
+
+func hmacSHA256(key []byte, content string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(content))
+	return mac.Sum(nil)
+}
+
+func getSignedKey(secretKey, date, region, service string) []byte {
+	kDate := hmacSHA256([]byte(secretKey), date)
+	kRegion := hmacSHA256(kDate, region)
+	kService := hmacSHA256(kRegion, service)
+	kSigning := hmacSHA256(kService, "request")
+
+return kSigning
+}
+
+func hashSHA256(data []byte) []byte {
+	hash := sha256.New()
+	if _, err := hash.Write(data); err != nil {
+		log.Printf("input hash err:%s", err.Error())
+	}
+
+return hash.Sum(nil)
+}
+
+func doRequest(method string, queries url.Values, body []byte) error {
+	// 1. 构建请求
+	queries.Set("Action", Action)
+	queries.Set("Version", Version)
+	requestAddr := fmt.Sprintf("%s%s?%s", Addr, Path, queries.Encode())
+	log.Printf("request addr: %s\n", requestAddr)
+
+request, err := http.NewRequest(method, requestAddr, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("bad request: %w", err)
+	}
+
+// 2. 构建签名材料
+	now := time.Now()
+	date := now.UTC().Format("20060102T150405Z")
+	authDate := date[:8]
+	request.Header.Set("X-Date", date)
+
+payload := hex.EncodeToString(hashSHA256(body))
+	request.Header.Set("X-Content-Sha256", payload)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+queryString := strings.Replace(queries.Encode(), "+", "%20", -1)
+	signedHeaders := []string{"host", "x-date", "x-content-sha256", "content-type"}
+	var headerList []string
+	for _, header := range signedHeaders {
+		if header == "host" {
+			headerList = append(headerList, header+":"+request.Host)
+		} else {
+			v := request.Header.Get(header)
+			headerList = append(headerList, header+":"+strings.TrimSpace(v))
+		}
+	}
+	headerString := strings.Join(headerList, "\n")
+
+canonicalString := strings.Join([]string{
+		method,
+		Path,
+		queryString,
+		headerString + "\n",
+		strings.Join(signedHeaders, ";"),
+		payload,
+	}, "\n")
+	log.Printf("canonical string:\n%s\n", canonicalString)
+
+hashedCanonicalString := hex.EncodeToString(hashSHA256([]byte(canonicalString)))
+	log.Printf("hashed canonical string: %s\n", hashedCanonicalString)
+
+credentialScope := authDate + "/" + Region + "/" + Service + "/request"
+	signString := strings.Join([]string{
+		"HMAC-SHA256",
+		date,
+		credentialScope,
+		hashedCanonicalString,
+	}, "\n")
+	log.Printf("sign string:\n%s\n", signString)
+
+// 3. 构建认证请求头
+	signedKey := getSignedKey(SecretAccessKey, authDate, Region, Service)
+	signature := hex.EncodeToString(hmacSHA256(signedKey, signString))
+	log.Printf("signature: %s\n", signature)
+
+authorization := "HMAC-SHA256" +
+		" Credential=" + AccessKeyID + "/" + credentialScope +
+		", SignedHeaders=" + strings.Join(signedHeaders, ";") +
+		", Signature=" + signature
+	request.Header.Set("Authorization", authorization)
+	log.Printf("authorization: %s\n", authorization)
+
+// 4. 打印请求，发起请求
+	requestRaw, err := httputil.DumpRequest(request, true)
+	if err != nil {
+		return fmt.Errorf("dump request err: %w", err)
+	}
+
+log.Printf("request:\n%s\n", string(requestRaw))
+
+response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("do request err: %w", err)
+	}
+
+// 5. 打印响应
+	responseRaw, err := httputil.DumpResponse(response, true)
+	if err != nil {
+		return fmt.Errorf("dump response err: %w", err)
+	}
+
+log.Printf("response:\n%s\n", string(responseRaw))
+
+if response.StatusCode == 200 {
+		log.Printf("请求成功")
+	} else {
+		log.Printf("请求失败")
+	}
+
+return nil
+}
+
+func main() {
+	// GET 请求例子
+	query1 := make(url.Values)
+	query1.Set("Limit", "1")
+	query1.Set("Scope", "Custom")
+	doRequest(http.MethodGet, query1, nil)
+
+// Post 请求例子
+	// query2 := make(url.Values)
+	// query2.Set("Limit", "1")
+	// doRequest(http.MethodPost, query2, []byte(`Scope=System`))
+}
+# coding:utf-8
+"""
+Copyright (year) Beijing Volcano Engine Technology Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+import datetime
+import hashlib
+import hmac
+from urllib.parse import quote
+
+import requests
+
+# 以下参数视服务不同而不同，一个服务内通常是一致的
+Service = "iam"
+Version = "2018-01-01"
+Region = "cn-north-1"
+Host = "iam.volcengineapi.com"
+ContentType = "application/x-www-form-urlencoded"
+
+# 请求的凭证，从IAM或者STS服务中获取
+AK = "AKExample***********"
+SK = "QwERrtyasdf*********"
+# 当使用临时凭证时，需要使用到SessionToken传入Header，并计算进SignedHeader中，请自行在header参数中添加X-Security-Token头
+# SessionToken = ""
+
+def norm_query(params):
+    query = ""
+    for key in sorted(params.keys()):
+        if type(params[key]) == list:
+            for k in params[key]:
+                query = (
+                        query + quote(key, safe="-_.~") + "=" + quote(k, safe="-_.~") + "&"
+                )
+        else:
+            query = (query + quote(key, safe="-_.~") + "=" + quote(params[key], safe="-_.~") + "&")
+    query = query[:-1]
+    return query.replace("+", "%20")
+
+# 第一步：准备辅助函数。
+# sha256 非对称加密
+def hmac_sha256(key: bytes, content: str):
+    return hmac.new(key, content.encode("utf-8"), hashlib.sha256).digest()
+
+# sha256 hash算法
+def hash_sha256(content: str):
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+# 第二步：签名请求函数
+def request(method, date, query, header, ak, sk, action, body):
+    # 第三步：创建身份证明。其中的 Service 和 Region 字段是固定的。ak 和 sk 分别代表
+    # AccessKeyID 和 SecretAccessKey。同时需要初始化签名结构体。一些签名计算时需要的属性也在这里处理。
+    # 初始化身份证明结构体
+    credential = {
+        "access_key_id": ak,
+        "secret_access_key": sk,
+        "service": Service,
+        "region": Region,
+    }
+    # 初始化签名结构体
+    request_param = {
+        "body": body,
+        "host": Host,
+        "path": "/",
+        "method": method,
+        "content_type": ContentType,
+        "date": date,
+        "query": {"Action": action, "Version": Version, **query},
+    }
+    if body is None:
+        request_param["body"] = ""
+    # 第四步：接下来开始计算签名。在计算签名前，先准备好用于接收签算结果的 signResult 变量，并设置一些参数。
+    # 初始化签名结果的结构体
+    x_date = request_param["date"].strftime("%Y%m%dT%H%M%SZ")
+    short_x_date = x_date[:8]
+    x_content_sha256 = hash_sha256(request_param["body"])
+    sign_result = {
+        "Host": request_param["host"],
+        "X-Content-Sha256": x_content_sha256,
+        "X-Date": x_date,
+        "Content-Type": request_param["content_type"],
+    }
+    # 第五步：计算 Signature 签名。
+    signed_headers_str = ";".join(
+        ["content-type", "host", "x-content-sha256", "x-date"]
+    )
+    # signed_headers_str = signed_headers_str + ";x-security-token"
+    canonical_request_str = "\n".join(
+        [request_param["method"].upper(),
+         request_param["path"],
+         norm_query(request_param["query"]),
+         "\n".join(
+             [
+                 "content-type:" + request_param["content_type"],
+                 "host:" + request_param["host"],
+                 "x-content-sha256:" + x_content_sha256,
+                 "x-date:" + x_date,
+             ]
+         ),
+         "",
+         signed_headers_str,
+         x_content_sha256,
+         ]
+    )
+
+# 打印正规化的请求用于调试比对
+    print(canonical_request_str)
+    hashed_canonical_request = hash_sha256(canonical_request_str)
+
+# 打印hash值用于调试比对
+    print(hashed_canonical_request)
+    credential_scope = "/".join([short_x_date, credential["region"], credential["service"], "request"])
+    string_to_sign = "\n".join(["HMAC-SHA256", x_date, credential_scope, hashed_canonical_request])
+
+# 打印最终计算的签名字符串用于调试比对
+    print(string_to_sign)
+    k_date = hmac_sha256(credential["secret_access_key"].encode("utf-8"), short_x_date)
+    k_region = hmac_sha256(k_date, credential["region"])
+    k_service = hmac_sha256(k_region, credential["service"])
+    k_signing = hmac_sha256(k_service, "request")
+    signature = hmac_sha256(k_signing, string_to_sign).hex()
+
+sign_result["Authorization"] = "HMAC-SHA256 Credential={}, SignedHeaders={}, Signature={}".format(
+        credential["access_key_id"] + "/" + credential_scope,
+        signed_headers_str,
+        signature,
+    )
+    header = {**header, **sign_result}
+    # header = {**header, **{"X-Security-Token": SessionToken}}
+    # 第六步：将 Signature 签名写入 HTTP Header 中，并发送 HTTP 请求。
+    r = requests.request(method=method,
+                         url="https://{}{}".format(request_param["host"], request_param["path"]),
+                         headers=header,
+                         params=request_param["query"],
+                         data=request_param["body"],
+                         )
+    return r.json()
+
+# datetime.utcnow() 在 3.12+ 已经过期，使用如下方法兼容
+def utc_now():
+
+try:
+        from datetime import timezone
+        return datetime.datetime.now(timezone.utc)
+    except ImportError:
+        class UTC(datetime.tzinfo):
+            def utcoffset(self, dt):
+                return datetime.timedelta(0)
+            def tzname(self, dt):
+                return "UTC"
+            def dst(self, dt):
+                return datetime.timedelta(0)
+        return datetime.datetime.now(UTC())
+
+if __name__ == "__main__":
+    now = utc_now()
+
+# Body的格式需要配合Content-Type，API使用的类型请阅读具体的官方文档，如:json格式需要json.dumps(obj)
+    response_body = request("GET", now, {"Limit": "2"}, {}, AK, SK, "ListUsers", None)
+    print(response_body)
+
+response_body = request("POST", now, {"Limit": "10"}, {}, AK, SK, "ListUsers", "UnUseParam=ASDF")
+    print(response_body)
+<?php
+/**
+ * Copyright (year) Beijing Volcano Engine Technology Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+require 'vendor/autoload.php';
+
+// 需要自行安装 composer（https://getcomposer.org/doc/00-intro.md），并安装GuzzleHttp依赖， composer require guzzlehttp/guzzle:^7.0
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
+
+$Service = "iam";
+$Version = "2018-01-01";
+$Region = "cn-north-1";
+$Host = "iam.volcengineapi.com";
+$ContentType = "application/x-www-form-urlencoded";
+/**
+ * @throws GuzzleException
+ */
+// 第一步：创建一个  API 请求函数。签名计算的过程包含在该函数中。
+function request($method, $query, $header, $ak, $sk, $action, $body)
+{
+
+// 第二步：创建身份证明。其中的 Service 和 Region 字段是固定的。ak 和 sk 分别代表
+    // AccessKeyID 和 SecretAccessKey。同时需要初始化签名结构体。一些签名计算时需要的属性也在这里处理。
+    // 初始化身份证明结构体
+    global $Service, $Region, $Host, $Version, $ContentType;
+    $credential = [
+        'accessKeyId' => $ak,
+        'secretKeyId' => $sk,
+        'service' => $Service,
+        'region' => $Region,
+    ];
+
+// 初始化签名结构体
+    $query = array_merge($query, [
+      'Action' => $action,
+      'Version' => $Version
+    ]);
+    ksort($query);
+    $requestParam = [
+        // body是http请求需要的原生body
+        'body' => $body,
+        'host' => $Host,
+        'path' => '/',
+        'method' => $method,
+        'contentType' => $ContentType,
+        'date' => gmdate('Ymd\THis\Z'),
+        'query' => $query
+    ];
+
+// 第三步：接下来开始计算签名。在计算签名前，先准备好用于接收签算结果的 signResult 变量，并设置一些参数。
+    // 初始化签名结果的结构体
+    $xDate = $requestParam['date'];
+    $shortXDate = substr($xDate, 0, 8);
+    $xContentSha256 = hash('sha256', $requestParam['body']);
+    $signResult = [
+        'Host' => $requestParam['host'],
+        'X-Content-Sha256' => $xContentSha256,
+        'X-Date' => $xDate,
+        'Content-Type' => $requestParam['contentType']
+    ];
+    // 第四步：计算 Signature 签名。
+    $signedHeaderStr = join(';', ['content-type', 'host', 'x-content-sha256', 'x-date']);
+    $canonicalRequestStr = join("\n", [
+        $requestParam['method'],
+        $requestParam['path'],
+        http_build_query($requestParam['query']),
+        join("\n", ['content-type:' . $requestParam['contentType'], 'host:' . $requestParam['host'], 'x-content-sha256:' . $xContentSha256, 'x-date:' . $xDate]),
+        '',
+        $signedHeaderStr,
+        $xContentSha256
+    ]);
+    $hashedCanonicalRequest = hash("sha256", $canonicalRequestStr);
+    $credentialScope = join('/', [$shortXDate, $credential['region'], $credential['service'], 'request']);
+    $stringToSign = join("\n", ['HMAC-SHA256', $xDate, $credentialScope, $hashedCanonicalRequest]);
+    $kDate = hash_hmac("sha256", $shortXDate, $credential['secretKeyId'], true);
+    $kRegion = hash_hmac("sha256", $credential['region'], $kDate, true);
+    $kService = hash_hmac("sha256", $credential['service'], $kRegion, true);
+    $kSigning = hash_hmac("sha256", 'request', $kService, true);
+    $signature = hash_hmac("sha256", $stringToSign, $kSigning);
+    $signResult['Authorization'] = sprintf("HMAC-SHA256 Credential=%s, SignedHeaders=%s, Signature=%s", $credential['accessKeyId'] . '/' . $credentialScope, $signedHeaderStr, $signature);
+    $header = array_merge($header, $signResult);
+    // 第五步：将 Signature 签名写入 HTTP Header 中，并发送 HTTP 请求。
+    $client = new Client([
+        'base_uri' => 'https://' . $requestParam['host'],
+        'timeout' => 120.0,
+    ]);
+    return $client->request($method, 'https://' . $requestParam['host'] . $requestParam['path'], [
+        'headers' => $header,
+        'query' => $requestParam['query'],
+        'body' => $requestParam['body']
+    ]);
+}
+
+$now = time();
+
+$requestBody ="";
+
+$AK = 'ak';
+$SK = 'sk';
+
+try {
+    $response = request("GET", [], [], $AK, $SK, "ListUsers", $requestBody);
+    print_r($response->getBody()->getContents());
+} catch (GuzzleException $e) {
+    print_r($e->getMessage());
+};
+"use strict";
+/*
+Copyright (year) Beijing Volcano Engine Technology Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+const crypto = require("crypto");
+const util = require("util");
+const url = require("url");
+const fetch = require("node-fetch");
+const qs = require("querystring");
+const debuglog = util.debuglog('signer');
+
+/**
+ * 不参与加签过程的 header key
+ */
+const HEADER_KEYS_TO_IGNORE = new Set([
+    "authorization",
+    "content-type",
+    "content-length",
+    "user-agent",
+    "presigned-expires",
+    "expect",
+]);
+
+// do request example
+async function doRequest() {
+    const signParams = {
+        headers: {
+            // x-date header 是必传的
+            ["X-Date"]: getDateTimeNow(),
+        },
+        method: 'GET',
+        query: {
+            Version: '2018-01-01',
+            Action: 'ListPolicies',
+        },
+        accessKeyId: '*******',
+        secretAccessKey: '**********',
+        serviceName: 'iam',
+        region: 'cn-beijing',
+    };
+    // 正规化 query object， 防止串化后出现 query 值为 undefined 情况
+    for (const [key, val] of Object.entries(signParams.query)) {
+        if (val === undefined || val === null) {
+            signParams.query[key] = '';
+        }
+    }
+    const authorization = sign(signParams);
+    const res = await fetch(`https://iam.volcengineapi.com/?${qs.stringify(signParams.query)}`, {
+        headers: {
+            ...signParams.headers,
+            'Authorization': authorization,
+        },
+        method: signParams.method,
+    });
+    const responseText = await res.text();
+    console.log(responseText);
+}
+
+doRequest();
+
+function sign(params) {
+    const {
+        headers = {},
+        query = {},
+        region = '',
+        serviceName = '',
+        method = '',
+        pathName = '/',
+        accessKeyId = '',
+        secretAccessKey = '',
+        needSignHeaderKeys = [],
+        bodySha,
+    } = params;
+    const datetime = headers["X-Date"];
+    const date = datetime.substring(0, 8); // YYYYMMDD
+    // 创建正规化请求
+    const [signedHeaders, canonicalHeaders] = getSignHeaders(headers, needSignHeaderKeys);
+    const canonicalRequest = [
+        method.toUpperCase(),
+        pathName,
+        queryParamsToString(query) || '',
+        `${canonicalHeaders}\n`,
+        signedHeaders,
+        bodySha || hash(''),
+    ].join('\n');
+    const credentialScope = [date, region, serviceName, "request"].join('/');
+    // 创建签名字符串
+    const stringToSign = ["HMAC-SHA256", datetime, credentialScope, hash(canonicalRequest)].join('\n');
+    // 计算签名
+    const kDate = hmac(secretAccessKey, date);
+    const kRegion = hmac(kDate, region);
+    const kService = hmac(kRegion, serviceName);
+    const kSigning = hmac(kService, "request");
+    const signature = hmac(kSigning, stringToSign).toString('hex');
+    debuglog('--------CanonicalString:\n%s\n--------SignString:\n%s', canonicalRequest, stringToSign);
+
+return [
+        "HMAC-SHA256",
+        `Credential=${accessKeyId}/${credentialScope},`,
+        `SignedHeaders=${signedHeaders},`,
+        `Signature=${signature}`,
+    ].join(' ');
+}
+
+function hmac(secret, s) {
+    return crypto.createHmac('sha256', secret).update(s, 'utf8').digest();
+}
+
+function hash(s) {
+    return crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+function queryParamsToString(params) {
+    return Object.keys(params)
+        .sort()
+        .map((key) => {
+            const val = params[key];
+            if (typeof val === 'undefined' || val === null) {
+                return undefined;
+            }
+            const escapedKey = uriEscape(key);
+            if (!escapedKey) {
+                return undefined;
+            }
+            if (Array.isArray(val)) {
+                return `${escapedKey}=${val.map(uriEscape).sort().join(`&${escapedKey}=`)}`;
+            }
+            return `${escapedKey}=${uriEscape(val)}`;
+        })
+        .filter((v) => v)
+        .join('&');
+}
+
+function getSignHeaders(originHeaders, needSignHeaders) {
+    function trimHeaderValue(header) {
+        return header.toString?.().trim().replace(/\s+/g, ' ') ?? '';
+    }
+
+let h = Object.keys(originHeaders);
+    // 根据 needSignHeaders 过滤
+    if (Array.isArray(needSignHeaders)) {
+        const needSignSet = new Set([...needSignHeaders, 'x-date', 'host'].map((k) => k.toLowerCase()));
+        h = h.filter((k) => needSignSet.has(k.toLowerCase()));
+    }
+    // 根据 ignore headers 过滤
+    h = h.filter((k) => !HEADER_KEYS_TO_IGNORE.has(k.toLowerCase()));
+    const signedHeaderKeys = h
+        .slice()
+        .map((k) => k.toLowerCase())
+        .sort()
+        .join(';');
+    const canonicalHeaders = h
+        .sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
+        .map((k) => `${k.toLowerCase()}:${trimHeaderValue(originHeaders[k])}`)
+        .join('\n');
+    return [signedHeaderKeys, canonicalHeaders];
+}
+
+function uriEscape(str) {
+    try {
+        return encodeURIComponent(str)
+            .replace(/[^A-Za-z0-9_.~\-%]+/g, escape)
+            .replace(/[*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+    } catch (e) {
+        return '';
+    }
+}
+
+function getDateTimeNow() {
+    const now = new Date();
+    return now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+}
+
+// 获取 body sha256
+function getBodySha(body) {
+    const hash = crypto.createHash('sha256');
+    if (typeof body === 'string') {
+        hash.update(body);
+    } else if (body instanceof url.URLSearchParams) {
+        hash.update(body.toString());
+    } else if (util.isBuffer(body)) {
+        hash.update(body);
+    }
+    return hash.digest('hex');
+}

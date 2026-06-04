@@ -1,0 +1,336 @@
+我来检查当前的字体配置并提供统一的优化方案。
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\globals.css
+          
+## 字体统一优化方案
+
+### 一、问题分析
+
+当前字体配置存在以下问题：
+
+| 问题 | 表现 | 影响 |
+|------|------|------|
+| **字体混用** | 正文、UI、代码使用相同字体 | 视觉层次混乱 |
+| **无衬线字体** | 剧本内容用 sans 字体 | 长篇阅读体验差 |
+| **字重不统一** | 标题、正文字重随意设置 | 视觉不和谐 |
+| **行高不一致** | 不同区域行高差异大 | 阅读体验差 |
+
+---
+
+### 二、优化方案
+
+#### 2.1 更新全局样式
+
+**修改文件**：`/src/app/globals.css`
+
+```css
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* === 字体配置 === */
+  --font-sans:
+    'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  
+  --font-serif:
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun',
+    ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+  
+  --font-mono:
+    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+
+  /* === 字重配置 === */
+  --font-weight-light: 300;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* === 行高配置 === */
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.625;
+  --line-height-loose: 1.75;
+  --line-height-leading: 2;
+
+  /* === 字间距配置 === */
+  --letter-spacing-tight: -0.025em;
+  --letter-spacing-normal: 0em;
+  --letter-spacing-wide: 0.025em;
+  --letter-spacing-wider: 0.05em;
+  --letter-spacing-widest: 0.1em;
+
+  /* === 原有变量保持不变 === */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* ... 其他颜色变量保持不变 ... */
+}
+
+/* === 全局字体重置 === */
+* {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+/* === 场景化字体样式 === */
+
+/* 标题样式 */
+.font-heading {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* 正文样式 - 剧本内容、大纲等阅读场景 */
+.font-body {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-loose);
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+/* UI 文字样式 - 按钮、标签、导航等 */
+.font-ui {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+/* 等宽样式 - 代码、时间戳等 */
+.font-mono {
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-normal);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+/* === 剧本编辑器专用样式 === */
+.script-content {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-normal);
+  font-size: 16px;
+  line-height: var(--line-height-loose);
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+
+.script-content h1,
+.script-content h2,
+.script-content h3,
+.script-content h4,
+.script-content h5,
+.script-content h6 {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.script-content h1 { font-size: 1.75rem; }
+.script-content h2 { font-size: 1.5rem; }
+.script-content h3 { font-size: 1.25rem; }
+.script-content h4 { font-size: 1.125rem; }
+
+.script-content p {
+  margin-bottom: 1em;
+  text-indent: 2em;
+}
+
+.script-content .scene-heading {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wider);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.script-content .character-name {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  text-align: center;
+  margin-top: 1em;
+}
+
+.script-content .dialogue {
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  line-height: var(--line-height-loose);
+  padding-left: 3em;
+  padding-right: 6em;
+}
+
+.script-content .parenthetical {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-style: italic;
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+/* === 大纲/简介专用样式 === */
+.outline-content {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-normal);
+  font-size: 15px;
+  line-height: var(--line-height-relaxed);
+  letter-spacing: 0.005em;
+  color: var(--on-surface-variant);
+}
+
+.outline-content li {
+  margin-bottom: 0.5em;
+}
+
+.outline-content strong {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  color: var(--foreground);
+}
+
+/* === UI 组件样式 === */
+.btn-text {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  font-size: 0.875rem;
+  letter-spacing: var(--letter-spacing-normal);
+  text-transform: none;
+}
+
+.label-text {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-medium);
+  font-size: 0.75rem;
+  letter-spacing: var(--letter-spacing-wider);
+  text-transform: uppercase;
+}
+
+.card-title {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  font-size: 1rem;
+  letter-spacing: var(--letter-spacing-normal);
+}
+
+.card-subtitle {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  font-size: 0.875rem;
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--muted-foreground);
+}
+
+/* === 响应式字体调整 === */
+@media (max-width: 768px) {
+  .script-content {
+    font-size: 15px;
+    line-height: var(--line-height-relaxed);
+  }
+  
+  .outline-content {
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .script-content {
+    font-size: 17px;
+  }
+  
+  .outline-content {
+    font-size: 16px;
+  }
+}
+```
+
+---
+
+#### 2.2 为剧本编辑器组件应用样式
+
+**修改文件**：`/src/components/script-views/ScriptEditor.tsx`
+
+```tsx
+// 在剧本内容渲染区域添加样式
+<div className="script-content">
+  {/* 剧本内容 */}
+</div>
+```
+
+#### 2.3 为大纲/简介区域应用样式
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`（找到大纲简介区域）
+
+```tsx
+<textarea
+  className="outline-content w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-3 py-2 resize-none"
+  rows={3}
+  value={editSynopsis}
+  onChange={(e) => setEditSynopsis(e.target.value)}
+  placeholder="输入剧本简介，或点击提炼大纲自动分析..."
+/>
+```
+
+#### 2.4 为按钮和标签应用样式
+
+**修改文件**：`/src/components/ui/button.tsx`
+
+```tsx
+// 在 Button 组件中添加字体样式
+className={`btn-text ... /* 其他样式 */`}
+```
+
+**修改文件**：`/src/components/ui/badge.tsx`
+
+```tsx
+// 在 Badge 组件中添加字体样式
+className={`label-text ... /* 其他样式 */`}
+```
+
+---
+
+### 三、字体规范总结
+
+| 场景 | 字体族 | 字重 | 行高 | 说明 |
+|------|--------|------|------|------|
+| **剧本内容** | Serif | 400 | 1.75 | 适合长篇阅读 |
+| **大纲/简介** | Serif | 400 | 1.625 | 清晰易读 |
+| **标题** | Sans | 600 | 1.25 | 醒目突出 |
+| **UI按钮** | Sans | 500 | 1.5 | 现代简洁 |
+| **标签/徽章** | Sans | 500 | 1.25 | 紧凑统一 |
+| **代码/时间戳** | Mono | 400 | 1.5 | 等宽清晰 |
+
+---
+
+### 四、优化效果
+
+| 优化前 | 优化后 |
+|--------|--------|
+| 所有文字用相同字体 | 场景化字体，层次分明 |
+| 剧本用无衬线字体，阅读累 | 剧本用衬线字体，专业阅读体验 |
+| 字重随意设置 | 统一的字重规范 |
+| 行高混乱 | 合理的行高配置 |
+| 视觉平淡 | 高级感、专业感 |
+
+---
+
+### 五、禁止事项
+
+1. **禁止** 删除或修改全局字体变量定义
+2. **禁止** 在组件中硬编码字体样式，必须使用 CSS 类
+3. **禁止** 使用 `!important` 覆盖字体样式
+4. **禁止** 引入未在全局配置中声明的字体

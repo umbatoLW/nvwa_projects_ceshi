@@ -1,6 +1,25 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { execSync } from 'child_process';
 
+// 确保加载 .env.local 文件
+// Next.js 会自动加载，但在某些边缘情况下可能需要手动加载
+function ensureEnvLoaded(): void {
+  if (envLoaded) return;
+  envLoaded = true;
+  
+  // 检查是否已有 Supabase 配置
+  if (process.env.SUPABASE_URL || process.env.COZE_SUPABASE_URL) {
+    return; // 已有配置，无需加载
+  }
+  
+  // 尝试加载 .env.local
+  try {
+    require('dotenv').config({ path: '.env.local' });
+  } catch {
+    // dotenv 不可用，忽略
+  }
+}
+
 // 动态导入 coze-coding-dev-sdk，避免 top-level await 问题
 // 这些变量会在首次使用时初始化
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,7 +66,9 @@ interface SupabaseCredentials {
 }
 
 // 检查是否有 Supabase 环境变量（支持双命名）
+// 优先级：COZE_SUPABASE_* (扣子内置) > SUPABASE_* (用户自建)
 function hasSupabaseEnv(): boolean {
+  ensureEnvLoaded();
   const url = process.env.COZE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.COZE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   return !!(url && anonKey);
@@ -114,9 +135,9 @@ except Exception as e:
 }
 
 function getSupabaseCredentials(): SupabaseCredentials {
-  loadEnv();
+  ensureEnvLoaded();
 
-  // 支持双环境变量命名：COZE_SUPABASE_* 或 SUPABASE_*
+  // 支持双环境变量命名：COZE_SUPABASE_* (扣子内置) 优先于 SUPABASE_* (用户自建)
   const url = process.env.COZE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.COZE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 

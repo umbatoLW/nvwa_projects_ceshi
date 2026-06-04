@@ -1,0 +1,241 @@
+我来深入分析这两个问题。首先检查分镜生图和提示词优化的具体实现：
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\scripts\[id]\page.tsx
+          
+继续查看分镜生图和提示词优化的完整代码：
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\scripts\[id]\page.tsx
+          
+让我检查后端生图API和分镜数据保存逻辑：
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\api\ai\generate-image\route.ts
+          
+继续查看后端API的处理逻辑：
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\api\ai\generate-image\route.ts
+          
+继续查看后端API的响应逻辑和前端分镜数据的保存机制：
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\api\ai\generate-image\route.ts
+          
+继续查看后端API响应格式和前端分镜更新逻辑：
+
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\api\ai\generate-image\route.ts
+          
+现在让我检查前端如何处理API响应：
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\scripts\[id]\page.tsx
+          
+继续查看前端处理逻辑和提示词优化的保存机制：
+
+
+
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: d:\nvwa_projects\src\app\scripts\[id]\page.tsx
+          
+# AI 修复指令：分镜生图与提示词优化持久化问题
+
+## 问题深度分析
+
+### 问题1：分镜生图失败
+**根本原因**: 前端请求参数与后端响应格式不匹配
+
+| 问题点 | 前端代码 | 后端期望/返回 |
+|--------|----------|---------------|
+| 参数名 | `count: 1` | `n: 1` |
+| 响应解析 | `data.imageUrls` | `data.data.imageUrls` |
+
+### 问题2：优化提示词不持久化
+**根本原因**: `handleOptimizeStoryboardPrompt` 只更新了内存状态，**没有保存到数据库**，导致刷新后数据丢失。
+
+---
+
+## 修复指令
+
+### 步骤1：修复分镜生图接口调用
+
+**文件**: [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx)
+
+```typescript
+// 修改第1904-1925行的 handleGenerateStoryboardImage 函数
+const handleGenerateStoryboardImage = async (index: number, ratio: string = "16:9") => {
+  const board = script?.storyboards[index];
+  if (!board) return;
+  setGeneratingImageFor(index);
+  
+  // 根据比例获取正确的尺寸
+  const size = ratio === "16:9" ? "1280*720" : ratio === "9:16" ? "720*1280" : "1024*1024";
+  
+  try {
+    const res = await apiFetch("/api/ai/generate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        prompt: board.description, 
+        model: "seedream-4.6-t2i", // 指定即梦4.6模型
+        n: 1, // 修正：使用 n 代替 count
+        size: size,
+      }),
+    });
+    const data = await res.json();
+    
+    // 修正：后端返回格式是 { success: true, data: { imageUrls, ratio } }
+    const imageUrls = data?.data?.imageUrls || data.imageUrls;
+    
+    if (imageUrls && imageUrls.length > 0) {
+      setStoryboardImages((prev) => ({ ...prev, [index]: imageUrls[0] }));
+      toast.success("生图成功");
+    } else if (data?.data?.taskId || data?.data?.taskIds) {
+      // 异步任务模式，需要轮询
+      toast.info('图片生成任务已提交，正在处理中...');
+      // 添加轮询逻辑（可选）
+    } else {
+      toast.error(data?.error || data?.data?.error || "生图失败");
+    }
+  } catch (error) {
+    console.error('生图失败:', error);
+    toast.error("生图失败");
+  } finally {
+    setGeneratingImageFor(null);
+  }
+};
+```
+
+### 步骤2：修复提示词优化持久化
+
+**文件**: [`src/app/scripts/[id]/page.tsx`](file:///d:/nvwa_projects/src/app/scripts/[id]/page.tsx)
+
+```typescript
+// 修改第1880-1902行的 handleOptimizeStoryboardPrompt 函数
+const handleOptimizeStoryboardPrompt = async (index: number) => {
+  const board = script?.storyboards[index];
+  if (!board) return;
+  
+  try {
+    const res = await apiFetch("/api/ai/execute-node", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nodeType: "storyInput",
+        content: `请将以下分镜描述优化为AI绘画提示词（英文，包含风格、光影、构图、细节等关键词）：\n\n${board.description}`,
+      }),
+    });
+    const data = await res.json();
+    
+    if (data.success && script) {
+      const optimized = String(data.data || "");
+      const updated = [...script.storyboards];
+      updated[index] = { ...updated[index], description: optimized, shot: updated[index].shot };
+      
+      // 1. 更新内存状态
+      setScript({ ...script, storyboards: updated });
+      
+      // 2. 保存到数据库（关键修复）
+      await apiFetch(`/api/scripts/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storyboards: updated,
+        }),
+      });
+      
+      toast.success("提示词优化成功");
+    }
+  } catch (error) {
+    console.error('优化失败:', error);
+    toast.error("优化失败");
+  }
+};
+```
+
+---
+
+## 验证清单
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 点击分镜生图按钮 | 生图成功并显示在预览框 |
+| 点击提示词优化按钮 | 提示词优化成功并显示优化后内容 |
+| 优化后刷新页面 | 优化后的提示词仍然存在 |
+| 优化后切换页面再返回 | 优化后的提示词仍然存在 |
+
+---
+
+## 关键修复点总结
+
+| 问题 | 修复内容 | 文件位置 |
+|------|----------|----------|
+| 生图参数不匹配 | `count: 1` → `n: 1` | 第1912行 |
+| 生图响应解析错误 | `data.imageUrls` → `data?.data?.imageUrls` | 第1915行 |
+| 提示词不持久化 | 添加数据库保存逻辑 | 第1900-1907行 |
+
+执行以上修改后，分镜生图功能和提示词优化功能都将正常工作，且优化后的提示词会持久化保存到数据库，刷新页面后不会丢失。

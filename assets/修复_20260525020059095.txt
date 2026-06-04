@@ -1,0 +1,1287 @@
+
+
+# 🚨 第八轮检测（数据库层 + 数据一致性） - 详细修复指令
+
+## 📊 检测结果
+
+### 一、数据库问题分析
+
+#### 1.1 连接管理问题
+
+| 问题 | 风险等级 | 影响 |
+|------|---------|------|
+| **每次请求创建新客户端** | 🟠 高 | 连接池耗尽 |
+| **无请求级超时** | 🟠 高 | 慢查询阻塞 |
+| **无查询缓存** | 🟡 中 | 重复查询浪费资源 |
+
+#### 1.2 索引缺失
+
+| 表名 | 缺失索引 | 影响查询 |
+|------|---------|---------|
+| **characters** | user_id | 按用户筛选慢 |
+| **generations** | user_id, type | 按类型筛选慢 |
+| **workflows** | user_id | 按用户筛选慢 |
+| **credit_transactions** | related_id | 关联查询慢 |
+| **scripts** | user_id, status | 复合查询慢 |
+| **assets** | script_id, character_id | 关联查询慢 |
+
+#### 1.3 查询性能问题
+
+| 接口 | 问题 | 风险 |
+|------|------|------|
+| **scripts GET** | 无分页限制 | 全表扫描 |
+| **characters GET** | 无分页限制 | 全表扫描 |
+| **generations GET** | 无分页限制 | 全表扫描 |
+| **assets GET** | 无分页限制 | 全表扫描 |
+| **workflows GET** | 无分页限制 | 全表扫描 |
+| **多表查询** | 重复查询fallback | 性能浪费 |
+
+#### 1.4 数据一致性问题
+
+| 操作 | 风险场景 | 后果 |
+|------|---------|------|
+| **deductCredits** | 扣费成功但交易记录失败 | 余额不对 |
+| **AI生成** | 生成失败但已扣费 | 用户损失 |
+| **积分充值** | 充值成功但余额更新失败 | 余额不对 |
+| **异步任务** | 任务状态与实际不一致 | 数据混乱 |
+
+---
+
+## 🛠️ 修复方案
+
+### 第一阶段：数据库连接优化
+
+#### 1.1 创建连接池和缓存层
+
+**创建文件：** `/src/lib/database/db-client.ts`
+
+```typescript
+/**
+ * 数据库连接池和缓存层
+ * 优化数据库连接管理和查询性能
+ */
+
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+// 配置
+const DB_CONFIG = {
+  timeout: 30000,           // 查询超时（毫秒）
+  cacheSize: 1000,          // 缓存条目上限
+  cacheTTL: 60000,          // 缓存TTL（毫秒）
+};
+
+// 连接池（复用客户端实例）
+let cachedClient: SupabaseClient | null = null;
+let cachedClientTime = 0;
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+// 查询缓存
+const queryCache = new Map<string, CacheEntry<unknown>>();
+
+/**
+ * 获取数据库客户端（带连接池）
+ */
+export function getDbClient(): SupabaseClient {
+  // 检查缓存的客户端是否可用
+  if (cachedClient && Date.now() - cachedClientTime < 300000) { // 5分钟复用
+    return cachedClient;
+  }
+
+  // 重新创建客户端
+  const { getSupabaseClient: originalGetClient } = require('@/storage/database/supabase-client');
+  cachedClient = originalGetClient();
+  cachedClientTime = Date.now();
+
+  return cachedClient;
+}
+
+/**
+ * 生成缓存键
+ */
+function getCacheKey(table: string, query: Record<string, unknown>): string {
+  return `${table}:${JSON.stringify(query)}`;
+}
+
+/**
+ * 获取缓存数据
+ */
+export function getCached<T>(key: string): T | null {
+  const entry = queryCache.get(key);
+  
+  if (!entry) return null;
+  
+  // 检查是否过期
+  if (Date.now() - entry.timestamp > DB_CONFIG.cacheTTL) {
+    queryCache.delete(key);
+    return null;
+  }
+  
+  return entry.data as T;
+}
+
+/**
+ * 设置缓存数据
+ */
+export function setCache(key: string, data: unknown): void {
+  // 检查缓存大小
+  if (queryCache.size >= DB_CONFIG.cacheSize) {
+    // 删除最老的条目
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    
+    for (const [k, entry] of queryCache) {
+      if (entry.timestamp < oldestTime) {
+        oldestTime = entry.timestamp;
+        oldestKey = k;
+      }
+    }
+    
+    if (oldestKey) {
+      queryCache.delete(oldestKey);
+    }
+  }
+  
+  queryCache.set(key, {
+    data,
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * 清除缓存
+ */
+export function clearCache(pattern?: string): void {
+  if (!pattern) {
+    queryCache.clear();
+    return;
+  }
+  
+  for (const key of queryCache.keys()) {
+    if (key.includes(pattern)) {
+      queryCache.delete(key);
+    }
+  }
+}
+
+/**
+ * 清理过期缓存（定时任务）
+ */
+export function cleanupCache(): void {
+  const now = Date.now();
+  
+  for (const [key, entry] of queryCache) {
+    if (now - entry.timestamp > DB_CONFIG.cacheTTL) {
+      queryCache.delete(key);
+    }
+  }
+}
+
+// 定期清理（每5分钟）
+setInterval(cleanupCache, 5 * 60 * 1000);
+```
+
+#### 1.2 创建查询优化工具
+
+**创建文件：** `/src/lib/database/query-builder.ts`
+
+```typescript
+/**
+ * 数据库查询构建器和优化工具
+ */
+
+import { getDbClient } from './db-client';
+
+export interface PaginationParams {
+  page?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface QueryOptions {
+  select?: string | string[];
+  eq?: Record<string, unknown>;
+  order?: { column: string; ascending?: boolean };
+  pagination?: PaginationParams;
+  cache?: boolean;
+  cacheTTL?: number;
+}
+
+/**
+ * 带超时的查询执行
+ */
+export async function queryWithTimeout<T>(
+  table: string,
+  options: QueryOptions = {}
+): Promise<T[]> {
+  const client = getDbClient();
+  const cacheKey = options.cache ? `${table}:${JSON.stringify(options)}` : null;
+  
+  // 检查缓存
+  if (cacheKey) {
+    const cached = getCached<T[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+  
+  // 构建查询
+  let query = client.from(table).select(
+    Array.isArray(options.select) ? options.select.join(', ') : (options.select || '*')
+  );
+  
+  // 添加过滤条件
+  if (options.eq) {
+    for (const [key, value] of Object.entries(options.eq)) {
+      query = query.eq(key, value);
+    }
+  }
+  
+  // 添加排序
+  if (options.order) {
+    query = query.order(options.order.column, { 
+      ascending: options.order.ascending ?? false 
+    });
+  }
+  
+  // 添加分页
+  if (options.pagination) {
+    const { page = 1, limit = 20, offset } = options.pagination;
+    const actualOffset = offset ?? (page - 1) * limit;
+    query = query.range(actualOffset, actualOffset + limit - 1);
+  }
+  
+  // 设置超时
+  query = query.abortSignal(createAbortSignal(DB_CONFIG.timeout));
+  
+  // 执行查询
+  const { data, error } = await query;
+  
+  if (error) {
+    throw new Error(`查询失败: ${error.message}`);
+  }
+  
+  // 更新缓存
+  if (cacheKey && data) {
+    setCache(cacheKey, data);
+  }
+  
+  return (data || []) as T[];
+}
+
+/**
+ * 带分页的查询
+ */
+export async function queryPaginated<T>(
+  table: string,
+  options: QueryOptions = {}
+): Promise<{
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}> {
+  const client = getDbClient();
+  const { page = 1, limit = 20 } = options.pagination || {};
+  
+  // 构建基础查询
+  let query = client.from(table).select('*', { count: 'exact' });
+  
+  // 添加过滤条件
+  if (options.eq) {
+    for (const [key, value] of Object.entries(options.eq)) {
+      query = query.eq(key, value);
+    }
+  }
+  
+  // 添加排序
+  if (options.order) {
+    query = query.order(options.order.column, { 
+      ascending: options.order.ascending ?? false 
+    });
+  }
+  
+  // 添加分页
+  const offset = (page - 1) * limit;
+  query = query.range(offset, offset + limit - 1);
+  
+  // 执行查询
+  const { data, error, count } = await query;
+  
+  if (error) {
+    throw new Error(`查询失败: ${error.message}`);
+  }
+  
+  const total = count ?? 0;
+  
+  return {
+    data: (data || []) as T[],
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+/**
+ * 创建中止信号
+ */
+function createAbortSignal(timeout: number): AbortSignal {
+  return new Promise<AbortSignal>((resolve) => {
+    setTimeout(() => {
+      const controller = new AbortController();
+      resolve(controller.signal);
+    }, timeout);
+  }) as unknown as AbortSignal;
+}
+
+// 导入缓存函数
+import { getCached, setCache } from './db-client';
+
+// 导入配置
+const DB_CONFIG = {
+  timeout: 30000,
+};
+```
+
+---
+
+### 第二阶段：补充缺失索引
+
+#### 2.1 创建索引迁移脚本
+
+**创建文件：** `/scripts/add-missing-indexes.sql`
+
+```sql
+-- ============================================
+-- 数据库索引优化脚本
+-- 执行前请备份数据库！
+-- ============================================
+
+-- 1. characters 表 - 添加 user_id 索引
+CREATE INDEX IF NOT EXISTS characters_user_id_idx ON characters(user_id);
+CREATE INDEX IF NOT EXISTS characters_user_status_idx ON characters(user_id, status);
+
+-- 2. generations 表 - 添加 user_id 和 type 索引
+CREATE INDEX IF NOT EXISTS generations_user_id_idx ON generations(user_id);
+CREATE INDEX IF NOT EXISTS generations_type_idx ON generations(type);
+CREATE INDEX IF NOT EXISTS generations_user_type_idx ON generations(user_id, type);
+CREATE INDEX IF NOT EXISTS generations_created_at_idx ON generations(created_at DESC);
+
+-- 3. workflows 表 - 添加 user_id 索引
+CREATE INDEX IF NOT EXISTS workflows_user_id_idx ON workflows(user_id);
+CREATE INDEX IF NOT EXISTS workflows_user_status_idx ON workflows(user_id, status);
+
+-- 4. scripts 表 - 添加复合索引
+CREATE INDEX IF NOT EXISTS scripts_user_id_idx ON scripts(user_id);
+CREATE INDEX IF NOT EXISTS scripts_user_status_idx ON scripts(user_id, status);
+CREATE INDEX IF NOT EXISTS scripts_user_created_idx ON scripts(user_id, created_at DESC);
+
+-- 5. credit_transactions 表 - 添加 related_id 索引
+CREATE INDEX IF NOT EXISTS credit_transactions_related_id_idx ON credit_transactions(related_id);
+CREATE INDEX IF NOT EXISTS credit_transactions_user_created_idx ON credit_transactions(user_id, created_at DESC);
+
+-- 6. assets 表 - 添加关联索引
+CREATE INDEX IF NOT EXISTS assets_script_id_idx ON assets(script_id);
+CREATE INDEX IF NOT EXISTS assets_character_id_idx ON assets(character_id);
+CREATE INDEX IF NOT EXISTS assets_user_script_idx ON assets(user_id, script_id);
+CREATE INDEX IF NOT EXISTS assets_user_character_idx ON assets(user_id, character_id);
+
+-- 7. user_credits 表 - 确保索引存在
+CREATE INDEX IF NOT EXISTS user_credits_updated_at_idx ON user_credits(updated_at DESC);
+
+-- ============================================
+-- 索引分析统计（可选，执行以收集统计信息）
+-- ============================================
+ANALYZE;
+```
+
+#### 2.2 创建索引检查工具
+
+**创建文件：** `/src/lib/database/index-checker.ts`
+
+```typescript
+/**
+ * 数据库索引检查工具
+ */
+
+import { getDbClient } from './db-client';
+
+/**
+ * 检查表是否有指定索引
+ */
+export async function hasIndex(tableName: string, indexName: string): Promise<boolean> {
+  const client = getDbClient();
+  
+  const { data, error } = await client
+    .from('pg_indexes')
+    .select('indexname')
+    .eq('tablename', tableName)
+    .eq('indexname', indexName);
+  
+  if (error) {
+    console.warn(`[IndexCheck] Failed to check index: ${error.message}`);
+    return false;
+  }
+  
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * 获取表的索引列表
+ */
+export async function getTableIndexes(tableName: string): Promise<string[]> {
+  const client = getDbClient();
+  
+  const { data, error } = await client
+    .from('pg_indexes')
+    .select('indexname')
+    .eq('tablename', tableName);
+  
+  if (error) {
+    console.error(`[IndexCheck] Failed to get indexes: ${error.message}`);
+    return [];
+  }
+  
+  return (data || []).map(row => row.indexname);
+}
+
+/**
+ * 必需索引清单
+ */
+export const REQUIRED_INDEXES: Record<string, string[]> = {
+  characters: [
+    'characters_user_id_idx',
+    'characters_status_idx',
+    'characters_created_at_idx',
+  ],
+  generations: [
+    'generations_user_id_idx',
+    'generations_type_idx',
+    'generations_created_at_idx',
+  ],
+  workflows: [
+    'workflows_user_id_idx',
+    'workflows_status_idx',
+    'workflows_created_at_idx',
+  ],
+  scripts: [
+    'scripts_user_id_idx',
+    'scripts_status_idx',
+    'scripts_created_at_idx',
+  ],
+  credit_transactions: [
+    'credit_transactions_user_id_idx',
+    'credit_transactions_type_idx',
+    'credit_transactions_created_at_idx',
+  ],
+  assets: [
+    'assets_user_id_idx',
+    'assets_category_idx',
+    'assets_created_at_idx',
+    'assets_type_idx',
+    'assets_script_id_idx',
+    'assets_character_id_idx',
+  ],
+};
+
+/**
+ * 检查所有必需索引
+ */
+export async function checkRequiredIndexes(): Promise<{
+  missing: string[];
+  present: string[];
+}> {
+  const missing: string[] = [];
+  const present: string[] = [];
+  
+  for (const [table, indexes] of Object.entries(REQUIRED_INDEXES)) {
+    for (const index of indexes) {
+      const exists = await hasIndex(table, index);
+      if (exists) {
+        present.push(`${table}.${index}`);
+      } else {
+        missing.push(`${table}.${index}`);
+      }
+    }
+  }
+  
+  return { missing, present };
+}
+```
+
+---
+
+### 第三阶段：数据一致性保障
+
+#### 3.1 创建事务保护工具
+
+**创建文件：** `/src/lib/database/transaction.ts`
+
+```typescript
+/**
+ * 数据库事务和一致性保护工具
+ */
+
+import { getDbClient } from './db-client';
+
+export interface TransactionResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+/**
+ * 执行带事务的操作
+ */
+export async function withTransaction<T>(
+  operation: (client: ReturnType<typeof getDbClient>) => Promise<T>
+): Promise<TransactionResult<T>> {
+  const client = getDbClient();
+  
+  try {
+    // 开始事务
+    const { error: beginError } = await client.rpc('begin');
+    if (beginError) {
+      throw new Error(`开始事务失败: ${beginError.message}`);
+    }
+    
+    let result: T;
+    
+    try {
+      // 执行操作
+      result = await operation(client);
+      
+      // 提交事务
+      const { error: commitError } = await client.rpc('commit');
+      if (commitError) {
+        throw new Error(`提交事务失败: ${commitError.message}`);
+      }
+      
+      return { success: true, data: result };
+    } catch (error) {
+      // 回滚事务
+      await client.rpc('rollback');
+      throw error;
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '事务执行失败',
+    };
+  }
+}
+
+/**
+ * 带重试的数据库操作（处理死锁）
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  retryDelay: number = 100
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // 检查是否是死锁错误
+      const isDeadlock = 
+        lastError.message.includes('deadlock') ||
+        lastError.message.includes(' deadlock ') ||
+        lastError.message.includes('could not obtain lock');
+      
+      if (!isDeadlock || attempt === maxRetries) {
+        throw lastError;
+      }
+      
+      // 等待后重试
+      await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+    }
+  }
+  
+  throw lastError;
+}
+
+/**
+ * 补偿操作工具
+ * 用于在操作失败时执行补偿逻辑
+ */
+export class CompensableOperation<T, R = void> {
+  constructor(
+    private execute: () => Promise<T>,
+    private compensate: (result: T) => Promise<R>
+  ) {}
+  
+  async executeWithCompensation(): Promise<{ success: boolean; data?: T; error?: string }> {
+    let result: T | null = null;
+    
+    try {
+      result = await this.execute();
+      return { success: true, data: result };
+    } catch (error) {
+      // 执行补偿操作
+      if (result !== null) {
+        try {
+          await this.compensate(result);
+        } catch (compensateError) {
+          console.error('[Compensation] Failed to compensate:', compensateError);
+          // 记录补偿失败，供后续处理
+        }
+      }
+      
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '操作失败',
+      };
+    }
+  }
+}
+```
+
+#### 3.2 增强积分扣费（事务保护）
+
+**修改文件：** `/src/lib/credits.ts`
+
+```typescript
+import { createClient } from "@supabase/supabase-js";
+import { withTransaction, withRetry } from "@/lib/database/transaction";
+import { logger } from "@/lib/logger";
+
+const supabaseUrl = process.env.COZE_SUPABASE_URL;
+const serviceKey = process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+
+function getClient() {
+  if (!supabaseUrl || !serviceKey) throw new Error("Supabase env missing");
+  return createClient(supabaseUrl, serviceKey);
+}
+
+export interface DeductResult {
+  success: boolean;
+  balance: number;
+  cost: number;
+  error?: string;
+  transactionId?: string; // 新增：事务ID用于追踪
+}
+
+export async function deductCredits(
+  userId: string,
+  modelKey: string,
+  description: string,
+  relatedId?: string
+): Promise<DeductResult> {
+  // 使用重试机制处理并发
+  return withRetry(async () => {
+    // 使用事务确保一致性
+    const result = await withTransaction(async (client) => {
+      // 1. 查询模型定价
+      const { data: pricingData, error: pricingError } = await client
+        .from("model_pricing")
+        .select("cost_per_call")
+        .eq("model_key", modelKey)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (pricingError) throw new Error(`查询定价失败: ${pricingError.message}`);
+      if (!pricingData) {
+        throw new Error(`未找到模型 ${modelKey} 的定价配置`);
+      }
+
+      const cost = pricingData.cost_per_call;
+
+      // 2. 查询当前余额（使用行锁）
+      const { data: creditData, error: creditError } = await client
+        .from("user_credits")
+        .select("id, balance, total_consumed, total_recharged")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (creditError) throw new Error(`查询余额失败: ${creditError.message}`);
+
+      const currentBalance = creditData?.balance ?? 0;
+      const currentConsumed = creditData?.total_consumed ?? 0;
+
+      // 3. 检查余额
+      if (currentBalance < cost) {
+        throw new Error(`积分不足，当前余额 ${currentBalance.toFixed(2)}，需要 ${cost.toFixed(2)} 积分`);
+      }
+
+      // 4. 计算新余额
+      const newBalance = currentBalance - cost;
+      const newConsumed = currentConsumed + cost;
+      const transactionId = `${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      // 5. 更新余额
+      const { error: updateError } = await client
+        .from("user_credits")
+        .upsert(
+          {
+            user_id: userId,
+            balance: newBalance,
+            total_consumed: newConsumed,
+            total_recharged: creditData?.total_recharged ?? 0,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+
+      if (updateError) throw new Error(`扣费失败: ${updateError.message}`);
+
+      // 6. 记录交易（如果在事务中失败，会自动回滚）
+      const { error: txError } = await client.from("credit_transactions").insert({
+        user_id: userId,
+        type: "consume",
+        amount: -cost,
+        balance_after: newBalance,
+        description: description,
+        model: modelKey,
+        related_id: relatedId,
+        metadata: { transaction_id: transactionId },
+        created_at: new Date().toISOString(),
+      });
+
+      if (txError) throw new Error(`记录交易失败: ${txError.message}`);
+
+      logger.info(`[DeductCredits] Success: user=${userId}, cost=${cost}, newBalance=${newBalance}, txId=${transactionId}`);
+
+      return {
+        success: true,
+        balance: newBalance,
+        cost: cost,
+        transactionId,
+      };
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        balance: 0,
+        cost: 0,
+        error: result.error,
+      };
+    }
+
+    return {
+      success: true,
+      balance: result.data!.balance,
+      cost: result.data!.cost,
+      transactionId: result.data!.transactionId,
+    };
+  });
+}
+
+/**
+ * 补偿扣费（用于AI生成失败后的退款）
+ */
+export async function refundCredits(
+  userId: string,
+  transactionId: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  return withRetry(async () => {
+    return withTransaction(async (client) => {
+      // 1. 查找原始交易
+      const { data: tx, error: txError } = await client
+        .from("credit_transactions")
+        .select("id, amount, user_id")
+        .eq("user_id", userId)
+        .single();
+
+      if (txError || !tx) {
+        throw new Error("找不到原始交易记录");
+      }
+
+      const refundAmount = Math.abs(tx.amount);
+
+      // 2. 更新用户余额
+      const { data: credit, error: creditError } = await client
+        .from("user_credits")
+        .select("id, balance, total_recharged")
+        .eq("user_id", userId)
+        .single();
+
+      if (creditError) throw new Error(`查询余额失败: ${creditError.message}`);
+
+      const newBalance = (credit?.balance ?? 0) + refundAmount;
+      const newTotalRecharged = (credit?.total_recharged ?? 0) + refundAmount;
+
+      await client
+        .from("user_credits")
+        .update({
+          balance: newBalance,
+          total_recharged: newTotalRecharged,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+
+      // 3. 记录退款交易
+      await client.from("credit_transactions").insert({
+        user_id: userId,
+        type: "refund",
+        amount: refundAmount,
+        balance_after: newBalance,
+        description: `退款: ${reason}`,
+        related_id: transactionId,
+        metadata: { original_transaction: transactionId, reason },
+        created_at: new Date().toISOString(),
+      });
+
+      logger.info(`[RefundCredits] Success: user=${userId}, amount=${refundAmount}, reason=${reason}`);
+
+      return { success: true };
+    });
+  });
+}
+```
+
+---
+
+### 第四阶段：任务状态机
+
+#### 4.1 创建任务状态管理
+
+**创建文件：** `/src/lib/database/task-state.ts`
+
+```typescript
+/**
+ * AI任务状态机
+ * 用于管理异步任务的完整生命周期
+ */
+
+export type TaskStatus = 
+  | 'pending'      // 等待中
+  | 'processing'   // 处理中
+  | 'completed'    // 完成
+  | 'failed'       // 失败
+  | 'cancelled';   // 已取消
+
+export interface TaskState {
+  id: string;
+  status: TaskStatus;
+  userId: string;
+  type: string;           // 任务类型
+  model?: string;         // 使用的模型
+  relatedId?: string;    // 关联ID
+  input: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: string;
+  progress?: number;      // 进度 0-100
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+// 状态转换规则
+const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  pending: ['processing', 'cancelled'],
+  processing: ['completed', 'failed', 'cancelled'],
+  completed: [], // 终态
+  failed: [],   // 终态
+  cancelled: [], // 终态
+};
+
+/**
+ * 验证状态转换是否合法
+ */
+export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
+  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/**
+ * 获取当前状态的描述
+ */
+export function getStatusDescription(status: TaskStatus): string {
+  const descriptions: Record<TaskStatus, string> = {
+    pending: '等待处理',
+    processing: '正在生成',
+    completed: '已完成',
+    failed: '生成失败',
+    cancelled: '已取消',
+  };
+  return descriptions[status] || '未知状态';
+}
+
+/**
+ * 判断是否为终态
+ */
+export function isFinalState(status: TaskStatus): boolean {
+  return ['completed', 'failed', 'cancelled'].includes(status);
+}
+
+/**
+ * 生成任务ID
+ */
+export function generateTaskId(): string {
+  return `task_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+```
+
+#### 4.2 创建任务记录表迁移
+
+**创建文件：** `/scripts/create-tasks-table.sql`
+
+```sql
+-- ============================================
+-- AI任务状态记录表
+-- 用于追踪AI任务的完整生命周期
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS ai_tasks (
+  id VARCHAR(50) PRIMARY KEY,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  user_id VARCHAR(36) NOT NULL,
+  type VARCHAR(50) NOT NULL,  -- image, video, script, character, etc.
+  model VARCHAR(100),
+  related_id VARCHAR(36),      -- 关联的资源ID
+  input JSONB DEFAULT '{}',
+  output JSONB DEFAULT '{}',
+  error TEXT,
+  progress INTEGER DEFAULT 0,
+  transaction_id VARCHAR(100), -- 关联的积分交易ID
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+-- 索引
+CREATE INDEX IF NOT EXISTS ai_tasks_user_id_idx ON ai_tasks(user_id);
+CREATE INDEX IF NOT EXISTS ai_tasks_status_idx ON ai_tasks(status);
+CREATE INDEX IF NOT EXISTS ai_tasks_type_idx ON ai_tasks(type);
+CREATE INDEX IF NOT EXISTS ai_tasks_created_at_idx ON ai_tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_tasks_user_status_idx ON ai_tasks(user_id, status);
+
+-- 更新时间触发器
+CREATE OR REPLACE FUNCTION update_ai_tasks_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER ai_tasks_update_trigger
+  BEFORE UPDATE ON ai_tasks
+  FOR EACH ROW
+  EXECUTE FUNCTION update_ai_tasks_timestamp();
+
+COMMENT ON TABLE ai_tasks IS 'AI任务状态记录表';
+COMMENT ON COLUMN ai_tasks.transaction_id IS '关联的积分扣费交易ID，用于退款追踪';
+```
+
+---
+
+### 第五阶段：增强API分页
+
+#### 5.1 增强 scripts API
+
+**修改文件：** `/src/app/api/scripts/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getUserId } from '@/lib/server-auth';
+import { queryPaginated } from '@/lib/database/query-builder';
+
+// 简化 toCamelCase
+function toCamelCase(script: Record<string, unknown>) {
+  return {
+    id: script.id,
+    title: script.title,
+    genre: script.genre,
+    synopsis: script.synopsis,
+    content: script.content,
+    scenes: script.scenes,
+    characters: script.characters,
+    storyboards: script.storyboards || [],
+    roles: script.roles || [],
+    status: script.status,
+    coverImage: script.cover_image || null,
+    createdAt: script.created_at,
+    updatedAt: script.updated_at,
+  };
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1'));
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') ?? '20')));
+    const status = searchParams.get('status');
+    const search = searchParams.get('search');
+    
+    const client = getSupabaseClient();
+    const userId = await getUserId(request);
+    
+    // 构建查询
+    let query = client
+      .from('scripts')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false });
+    
+    // 用户过滤
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+    
+    // 状态过滤
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    // 搜索过滤（标题）
+    if (search) {
+      query = query.ilike('title', `%${search}%`);
+    }
+    
+    // 分页
+    const offset = (page - 1) * limit;
+    query = query.range(offset, offset + limit - 1);
+    
+    const { data, error, count } = await query;
+    
+    if (error) {
+      throw new Error(`查询剧本失败: ${error.message}`);
+    }
+    
+    const total = count ?? 0;
+    
+    return NextResponse.json({
+      success: true,
+      data: (data || []).map(toCamelCase),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error('[Scripts API] Error:', error);
+    return NextResponse.json(
+      { success: false, error: '查询失败' },
+      { status: 500 }
+    );
+  }
+}
+
+// POST 保持不变...
+```
+
+#### 5.2 增强 characters API
+
+**修改文件：** `/src/app/api/characters/route.ts`
+
+```typescript
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1'));
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') ?? '20')));
+    const status = searchParams.get('status');
+    
+    const client = getSupabaseClient();
+    const userId = await getUserId(request);
+    
+    let query = client
+      .from('characters')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false });
+    
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    // 分页
+    const offset = (page - 1) * limit;
+    query = query.range(offset, offset + limit - 1);
+    
+    const { data, error, count } = await query;
+    
+    if (error) {
+      throw new Error(`查询角色失败: ${error.message}`);
+    }
+    
+    return NextResponse.json({
+      success: true,
+      data: (data || []).map(toCamelCase),
+      pagination: {
+        page,
+        limit,
+        total: count ?? 0,
+        totalPages: Math.ceil((count ?? 0) / limit),
+      },
+    });
+  } catch (error) {
+    console.error('[Characters API] Error:', error);
+    return NextResponse.json(
+      { success: false, error: '查询失败' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+#### 5.3 增强 assets API
+
+**修改文件：** `/src/app/api/assets/route.ts`
+
+```typescript
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1'));
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') ?? '20')));
+    const scriptId = searchParams.get('scriptId');
+    const category = searchParams.get('category');
+    const type = searchParams.get('type');
+    
+    const client = getSupabaseClient();
+    const userId = await getUserId(request);
+    
+    let query = client
+      .from('assets')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false });
+    
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+    
+    if (scriptId) {
+      query = query.eq('script_id', scriptId);
+    }
+    
+    if (category) {
+      query = query.eq('category', category);
+    }
+    
+    if (type) {
+      query = query.eq('type', type);
+    }
+    
+    // 分页
+    const offset = (page - 1) * limit;
+    query = query.range(offset, offset + limit - 1);
+    
+    const { data, error, count } = await query;
+    
+    if (error) {
+      throw new Error(`查询资产失败: ${error.message}`);
+    }
+    
+    return NextResponse.json({
+      success: true,
+      data: (data || []).map(toCamelCase),
+      pagination: {
+        page,
+        limit,
+        total: count ?? 0,
+        totalPages: Math.ceil((count ?? 0) / limit),
+      },
+    });
+  } catch (error) {
+    console.error('[Assets API] Error:', error);
+    return NextResponse.json(
+      { success: false, error: '查询失败' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+---
+
+## ⛔ 禁止事项
+
+- ❌ 禁止 select * 查询大表
+- ❌ 禁止无分页查询
+- ❌ 禁止在事务外执行扣费
+- ❌ 禁止不记录交易日志
+- ❌ 禁止不处理死锁重试
+- ❌ 禁止删除现有索引
+
+---
+
+## ✅ 必须事项
+
+- ✅ 所有列表查询必须分页（最大50条）
+- ✅ 高频查询添加索引
+- ✅ 扣费操作使用事务
+- ✅ 记录完整交易日志
+- ✅ 支持死锁重试
+- ✅ 添加查询超时控制
+
+---
+
+## 📊 索引检查清单
+
+| 表名 | 索引 | 用途 | 状态 |
+|------|------|------|------|
+| characters | user_id | 用户筛选 | 需创建 |
+| characters | user_id, status | 复合筛选 | 需创建 |
+| generations | user_id | 用户筛选 | 需创建 |
+| generations | type | 类型筛选 | 需创建 |
+| generations | user_id, type | 复合筛选 | 需创建 |
+| workflows | user_id | 用户筛选 | 需创建 |
+| scripts | user_id, status | 复合筛选 | 需创建 |
+| credit_transactions | related_id | 关联查询 | 需创建 |
+| assets | script_id | 关联查询 | 需创建 |
+| assets | character_id | 关联查询 | 需创建 |
+
+---
+
+## 🔄 回滚方案
+
+### 数据库索引回滚
+```sql
+-- 删除添加的索引
+DROP INDEX IF EXISTS characters_user_id_idx;
+DROP INDEX IF EXISTS characters_user_status_idx;
+-- ... 其他索引类似
+```
+
+### 代码回滚
+1. **禁用事务**：注释 `withTransaction` 调用
+2. **禁用重试**：注释 `withRetry` 调用
+3. **移除分页**：设置 `limit = 10000`
+
+---
+
+## 🧪 测试方案
+
+| 测试项 | 测试方法 | 预期结果 |
+|-------|---------|---------|
+| 分页功能 | 请求 page=1&limit=10 | 只返回10条 |
+| 索引生效 | EXPLAIN ANALYZE 查询 | 使用索引 |
+| 事务回滚 | 模拟中途失败 | 余额未变 |
+| 死锁重试 | 并发扣费 | 自动重试成功 |
+| 缓存生效 | 相同查询两次 | 第二次更快 |
+
+---
+
+## 🎯 修复优先级
+
+| 阶段 | 内容 | 优先级 | 风险 |
+|-----|------|-------|------|
+| **第一阶段** | 创建缺失索引 | 🔴 紧急 | 低 |
+| **第二阶段** | 添加分页限制 | 🔴 紧急 | 低 |
+| **第三阶段** | 事务保护扣费 | 🔴 紧急 | 中 |
+| **第四阶段** | 任务状态机 | 🟠 高 | 中 |
+| **第五阶段** | 连接池优化 | 🟡 中 | 低 |
+
+**建议立即执行第一、第二、第三阶段，确保数据库稳定性和数据一致性。**

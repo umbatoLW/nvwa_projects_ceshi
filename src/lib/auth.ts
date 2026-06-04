@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// 开发模式：绕过登录检查
-const BYPASS_AUTH = true;
+// 开发模式：绕过登录检查（从环境变量读取）
+const BYPASS_AUTH = process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true';
 
 // 延迟初始化 Supabase 客户端，避免构建时报错
 let _supabaseAuth: SupabaseClient | null = null;
@@ -31,12 +31,9 @@ export const supabaseAuth = {
 };
 
 export async function getCurrentUser(req?: Request) {
-  // 开发模式：返回模拟用户
+  // 开发模式：返回模拟用户（绕过认证）
   if (BYPASS_AUTH) {
-    const authHeader = req?.headers.get('authorization');
-    if (authHeader?.includes('dev-token')) {
-      return { id: 'dev-user', email: 'dev@example.com' };
-    }
+    return { id: 'dev-user', email: 'dev@example.com' };
   }
   
   // 从请求头读取 JWT（服务端）

@@ -105,13 +105,13 @@ export async function GET(request: Request) {
   
   const { data, error, count } = await query;
   if (error) {
-    console.error('查询资产失败:', error);
+    console.error('查询资产失败:', error.message);
     return NextResponse.json({ 
       success: false, 
       error: `查询资产失败: ${error.message}`,
       data: [],
       pagination: { page, pageSize, total: 0, totalPages: 0, hasMore: false }
-    }, { status: 500 });
+    });
   }
   
   // 返回分页结果

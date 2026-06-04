@@ -1,13 +1,27 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Loader2, Sparkles, Upload } from "lucide-react";
+import { Loader2, Sparkles, Upload, Eye, EyeOff } from "lucide-react";
+import { ThreeStageProgress } from "@/components/script-generation";
+import { FiveDimensionScoreCard } from "@/components/script-generation";
+import { ScriptContentRenderer } from "@/components/script-generation";
+import { ScriptJsonRenderer, isJsonScriptContent } from "@/components/script-views/ScriptJsonRenderer";
+
+interface ScriptGenerationStage {
+  stage: number;
+  name: string;
+  output: string;
+  detail?: string;
+}
 
 interface ScriptEditorProps {
   script: ScriptDetail | null;
   editContent: string;
   setEditContent: (v: string) => void;
+  aiGeneratedContent?: string;
+  contentVersion?: 'manual' | 'ai';
+  setContentVersion?: (v: 'manual' | 'ai') => void;
   episodeContentMap: Record<number, string>;
   setEpisodeContentMap: (v: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
   activeEpisode: number;
@@ -23,6 +37,7 @@ interface ScriptEditorProps {
   generatedOutline: Record<string, unknown> | null;
   onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onGenerateFullScript: () => void;
+  stageProgress?: ScriptGenerationStage | null;  // 三阶段进度（可选）
 }
 
 interface ScriptDetail {
@@ -75,6 +90,9 @@ export default function ScriptEditor({
   script,
   editContent,
   setEditContent,
+  aiGeneratedContent = '',
+  contentVersion = 'manual',
+  setContentVersion,
   episodeContentMap,
   setEpisodeContentMap,
   activeEpisode,
@@ -90,8 +108,10 @@ export default function ScriptEditor({
   generatedOutline,
   onFileUpload,
   onGenerateFullScript,
+  stageProgress,
 }: ScriptEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showPreview, setShowPreview] = useState(true);  // 默认预览模式，JSON格式时美观展示
 
   // 单集内容更新
   const handleEpisodeContentChange = useCallback((episode: number, content: string) => {
@@ -198,8 +218,22 @@ export default function ScriptEditor({
         </div>
       )}
       
-      {/* 进度显示 */}
-      {(isUploading || isGeneratingScript || uploadProgress || analyzeProgress) && (
+      {/* 三阶段生成进度 - 使用 P2 开发的 ThreeStageProgress 组件（受控模式） */}
+      {stageProgress && isGeneratingScript && (
+        <div className="mb-4">
+          <ThreeStageProgress
+            stages={[
+              { stage: 1, name: '核心对话生成', progress: stageProgress.stage > 1 ? 100 : stageProgress.stage === 1 ? 50 : 0, status: stageProgress.stage > 1 ? 'completed' : stageProgress.stage === 1 ? 'running' : 'pending' },
+              { stage: 2, name: '完整大纲生成', progress: stageProgress.stage > 2 ? 100 : stageProgress.stage === 2 ? 50 : 0, status: stageProgress.stage > 2 ? 'completed' : stageProgress.stage === 2 ? 'running' : 'pending' },
+              { stage: 3, name: '逐集撰写', progress: stageProgress.stage > 3 ? 100 : stageProgress.stage === 3 ? 50 : 0, status: stageProgress.stage > 3 ? 'completed' : stageProgress.stage === 3 ? 'running' : 'pending' },
+            ]}
+            currentStage={stageProgress.stage}
+          />
+        </div>
+      )}
+
+      {/* 传统进度显示（非三阶段模式时） */}
+      {(isUploading || (isGeneratingScript && !stageProgress) || uploadProgress || analyzeProgress) && (
         <div className="mb-4 p-3 bg-[#0ABAB5]/10 border border-[#0ABAB5]/30 rounded-lg flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-[#0ABAB5]" />
           <span className="text-sm text-[#0ABAB5]">{uploadProgress || analyzeProgress || '处理中...'}</span>
@@ -225,6 +259,7 @@ export default function ScriptEditor({
         </div>
       )}
       
+      {/* AI/手动版本切换 Tab - 简化版，移到右上角 */}
       {/* 单集内容编辑器 */}
       <div className="relative flex-1 min-h-0">
         <input
@@ -233,22 +268,118 @@ export default function ScriptEditor({
           onChange={onFileUpload}
           accept=".txt,.md,.docx,.pdf"
           className="hidden"
+          aria-label="上传剧本文件"
         />
-        <textarea
-          key={activeEpisode}
-          className="script-content w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
-          value={script?.episodeCount && script.episodeCount > 1 ? (episodeContentMap[activeEpisode] || '') : editContent}
-          onChange={(e) => {
-            if (script?.episodeCount && script.episodeCount > 1) {
-              handleEpisodeContentChange(activeEpisode, e.target.value);
-            } else {
-              setEditContent(e.target.value);
+        
+        {/* 右上角工具栏：版本切换 + 编辑/预览 */}
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-2">
+          {/* 版本切换 */}
+          {aiGeneratedContent && setContentVersion && (
+            <div className="flex items-center gap-1 px-2 py-1 bg-[#1A1A1A] rounded-lg border border-[#333]">
+              <button
+                onClick={() => setContentVersion('manual')}
+                className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                  contentVersion === 'manual'
+                    ? 'bg-[#0ABAB5] text-black'
+                    : 'text-[#888] hover:text-[#F5F5F5]'
+                }`}
+              >
+                手动
+              </button>
+              <button
+                onClick={() => setContentVersion('ai')}
+                className={`px-2 py-0.5 rounded text-xs transition-colors flex items-center gap-1 ${
+                  contentVersion === 'ai'
+                    ? 'bg-[#0ABAB5] text-black'
+                    : 'text-[#888] hover:text-[#F5F5F5]'
+                }`}
+              >
+                AI
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+              </button>
+            </div>
+          )}
+          {/* 编辑/预览切换 */}
+          <button
+            onClick={() => setShowPreview(!showPreview)}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-[#1A1A1A] border border-[#333] text-xs text-[#888] hover:text-[#0ABAB5] transition-colors"
+            title={showPreview ? "切换到编辑模式" : "切换到预览模式"}
+            aria-pressed={showPreview}
+            aria-label={showPreview ? "切换到编辑模式" : "切换到预览模式"}
+          >
+            {showPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showPreview ? "编辑" : "预览"}
+          </button>
+        </div>
+        
+        {showPreview ? (
+          /* 预览模式：智能检测JSON格式，使用对应的渲染器 */
+          (() => {
+            const displayContent = script?.episodeCount && script.episodeCount > 1 
+              ? (episodeContentMap[activeEpisode] || '') 
+              : (contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent);
+            
+            // 如果是JSON格式，使用美观的卡片式渲染
+            if (isJsonScriptContent(displayContent)) {
+              return (
+                <div className="w-full h-full overflow-auto pr-2">
+                  <ScriptJsonRenderer 
+                    content={displayContent}
+                    onEpisodeClick={(ep) => {
+                      if (script?.episodeCount && script.episodeCount > 1) {
+                        setActiveEpisode(ep);
+                      }
+                    }}
+                  />
+                </div>
+              );
             }
-          }}
-          placeholder={script?.episodeCount && script.episodeCount > 1 ? `第 ${activeEpisode} 集内容...` : "在此输入或粘贴剧本内容..."}
-        />
+            
+            // 否则使用传统的标签高亮渲染
+            return (
+              <div className="w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 overflow-auto">
+                <ScriptContentRenderer
+                  content={displayContent}
+                  showTagLegend={true}
+                  onTagClick={(type, value) => {
+                    console.log('标签点击:', type, value);
+                  }}
+                />
+              </div>
+            );
+          })()
+        ) : (
+          /* 编辑模式：传统 textarea */
+          <textarea
+            key={activeEpisode}
+            className={`script-content w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none ${
+              contentVersion === 'ai' && aiGeneratedContent ? 'opacity-70 cursor-not-allowed' : ''
+            }`}
+            value={script?.episodeCount && script.episodeCount > 1 ? (episodeContentMap[activeEpisode] || '') : (contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent)}
+            onChange={(e) => {
+              if (contentVersion === 'ai' && aiGeneratedContent) return;
+              if (script?.episodeCount && script.episodeCount > 1) {
+                handleEpisodeContentChange(activeEpisode, e.target.value);
+              } else {
+                setEditContent(e.target.value);
+              }
+            }}
+            readOnly={contentVersion === 'ai' && !!aiGeneratedContent}
+            placeholder={script?.episodeCount && script.episodeCount > 1 ? `第 ${activeEpisode} 集内容...` : "在此输入或粘贴剧本内容..."}
+          />
+        )}
       </div>
       
+      {/* 五维度评分卡片 - 使用 P2 开发的 FiveDimensionScoreCard 组件 */}
+      {script && (editContent?.trim() || aiGeneratedContent?.trim()) && (
+        <div className="mt-4">
+          <FiveDimensionScoreCard
+            scriptId={script.id}
+            scriptContent={contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent}
+          />
+        </div>
+      )}
+
       {/* 提示信息 */}
       {script?.episodeCount && script.episodeCount > 1 && (
         <p className="text-xs text-[#888888] mt-2">

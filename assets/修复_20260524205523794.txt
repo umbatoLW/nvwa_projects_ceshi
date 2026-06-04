@@ -1,0 +1,188 @@
+
+          
+## 项目审查报告
+
+经过系统性检查，发现以下问题：
+
+---
+
+### 一、关键问题（必须修复）
+
+#### 问题1：子组件未被主组件使用 ❌
+
+| 子组件 | 状态 | 问题 |
+|--------|------|------|
+| `ScriptEditor` | ❌ 未导入 | 已创建但未使用，主组件仍用内联代码 |
+| `StoryboardView` | ❌ 未导入 | 已创建但未使用，主组件仍用内联代码 |
+| `RolesView` | ✅ 已使用 | 正确导入和使用 |
+| `OptimizeView` | ✅ 已使用 | 正确导入和使用 |
+| `CostumesView` | ✅ 已使用 | 正确导入和使用 |
+| `ScenesView` | ✅ 已使用 | 正确导入和使用 |
+| `PropsView` | ✅ 已使用 | 正确导入和使用 |
+| `RedlineView` | ✅ 已使用 | 正确导入和使用 |
+
+**证据**：
+```typescript
+// 主组件导入语句（第15-21行）
+import {
+  RolesView,
+  OptimizeView,
+  CostumesView,
+  ScenesView,
+  PropsView,
+  RedlineView,
+} from "@/components/script-views";
+
+// 缺少 ScriptEditor 和 StoryboardView 的导入
+
+// 主组件渲染（第2256行）
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 几百行内联代码 - 没有使用 ScriptEditor */}
+  </div>
+)}
+```
+
+---
+
+### 二、Props 匹配检查 ✅
+
+| 子组件 | Props 匹配 | 说明 |
+|--------|-----------|------|
+| `RolesView` | ✅ | 3个props完全匹配 |
+| `OptimizeView` | ✅ | 8个props完全匹配 |
+| `CostumesView` | ✅ | 17个props完全匹配 |
+| `ScenesView` | ✅ | 相同props |
+| `PropsView` | ✅ | 相同props |
+| `RedlineView` | ✅ | 3个props完全匹配 |
+
+---
+
+### 三、API与数据库检查 ✅
+
+| 检查项 | 状态 | 说明 |
+|--------|------|------|
+| `useAIStream` hook | ✅ | 已包含text/delta处理 |
+| `/api/scripts/[id]/route.ts` | ✅ | GET/PUT正常 |
+| `/api/ai/split-scenes/route.ts` | ✅ | 流式响应正常 |
+| 数据库Schema映射 | ✅ | 字段映射正确 |
+
+---
+
+## 修复指令
+
+### 一、完整使用 ScriptEditor 子组件
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+**1. 添加导入**（在第21行后添加）：
+```typescript
+import {
+  ScriptEditor,
+  StoryboardView,
+  RolesView,
+  OptimizeView,
+  CostumesView,
+  ScenesView,
+  PropsView,
+  RedlineView,
+} from "@/components/script-views";
+```
+
+**2. 替换剧本编辑视图**（找到约第2256行）：
+```typescript
+// 替换前
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 内联代码 */}
+  </div>
+)}
+
+// 替换后
+{activeView === "script" && (
+  <ScriptEditor
+    script={script}
+    editContent={editContent}
+    setEditContent={setEditContent}
+    episodeContentMap={episodeContentMap}
+    setEpisodeContentMap={setEpisodeContentMap}
+    activeEpisode={activeEpisode}
+    setActiveEpisode={setActiveEpisode}
+    isUploading={isUploading}
+    uploadProgress={uploadProgress}
+    analyzeProgress={analyzeProgress}
+    isGeneratingScript={isGeneratingScript}
+    scriptIdea={scriptIdea}
+    setScriptIdea={setScriptIdea}
+    targetEpisodes={targetEpisodes}
+    setTargetEpisodes={setTargetEpisodes}
+    generatedOutline={generatedOutline}
+    onFileUpload={handleFileUpload}
+    onGenerateFullScript={handleGenerateFullScript}
+  />
+)}
+```
+
+---
+
+### 二、完整使用 StoryboardView 子组件
+
+**替换分镜视图**（找到约第2401行）：
+```typescript
+// 替换前
+{activeView === "storyboard" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 内联代码 */}
+  </div>
+)}
+
+// 替换后
+{activeView === "storyboard" && (
+  <StoryboardView
+    storyboards={script?.storyboards || []}
+    episodes={episodeList}
+    episodeCount={script?.episodeCount || 0}
+    isSplitting={isSplitting}
+    isAnalyzingEpisodes={isAnalyzingEpisodes}
+    generatingEpisode={generatingEpisode}
+    showEpisodeSelector={showEpisodeSelector}
+    selectedEpisodes={selectedEpisodes}
+    content={editContent}
+    onSplitScenes={handleSplitScenes}
+    onExportExcel={handleExportStoryboardExcel}
+    onImageGenerated={handleStoryboardImageGenerated}
+    onSetShowEpisodeSelector={setShowEpisodeSelector}
+    onToggleEpisodeSelection={handleToggleEpisodeSelection}
+    onToggleSelectAll={handleToggleSelectAll}
+    onGenerateBySelectedEpisodes={handleGenerateBySelectedEpisodes}
+    onSetActiveView={setActiveView}
+  />
+)}
+```
+
+---
+
+### 三、验证清单
+
+| 检查项 | 通过标准 |
+|--------|---------|
+| ScriptEditor 导入 | 无 TS 错误 |
+| StoryboardView 导入 | 无 TS 错误 |
+| 剧本编辑功能 | 上传、编辑、保存正常 |
+| 分镜生成功能 | 生成分镜正常 |
+| 角色提取功能 | 提取角色正常 |
+| 服装提取功能 | 提取服装正常 |
+| 场景提取功能 | 提取场景正常 |
+| 道具提取功能 | 提取道具正常 |
+| AI优化功能 | 流式优化正常 |
+| 切换视图 | 无卡顿、无报错 |
+| 移动端适配 | 布局正常 |
+
+---
+
+### 四、禁止事项
+
+1. **禁止删除** `ScriptEditor.tsx` 和 `StoryboardView.tsx` 文件
+2. **禁止修改** 子组件的接口定义（Props types）
+3. **禁止修改** 主组件中已正确使用的子组件调用代码
+4. **禁止修改** API routes 的接口定义

@@ -1,0 +1,452 @@
+# AI编程指令：React Flow 工作流执行修复
+
+## 📋 任务概述
+
+**目标**: 修复 React Flow 工作流执行中的多个严重问题
+**文件**: `src/app/workspace/page.tsx`
+**约束**: 只修复工作流执行逻辑问题，不得修改 UI 渲染和其他业务逻辑
+
+---
+
+## 🔧 问题1：Ref 依赖捕获失效（致命）
+
+### 问题描述
+`getUpstreamResult` 和 `getUpstreamScenes` 两个函数使用 `useCallback` 但依赖数组为空，导致返回过时数据。
+
+### 问题位置
+[src/app/workspace/page.tsx:203-234](file:///d:/nvwa_projects/src/app/workspace/page.tsx#L203)
+
+### 修复方案
+
+**方案A：移除 useCallback，直接使用函数（推荐）**
+
+```typescript
+// 修改前
+const getUpstreamResult = useCallback(
+  (nodeId: string) => {
+    const upstreamEdge = edgesRef.current.find((e) => e.target === nodeId);
+    if (!upstreamEdge) return null;
+    const upstreamNode = nodesRef.current.find((n) => n.id === upstreamEdge.source);
+    if (!upstreamNode) return null;
+    const result = upstreamNode.data?.result;
+    if (result && typeof result === 'object') {
+      if ('content' in result) return (result as { content: string }).content;
+      if ('imageUrl' in result) return (result as { imageUrl: string }).imageUrl;
+      if ('videoUrl' in result) return (result as { videoUrl: string }).videoUrl;
+    }
+    if (typeof result === 'string') return result;
+    return (upstreamNode.data?.description as string) || null;
+  },
+  []
+);
+
+const getUpstreamScenes = useCallback(
+  (nodeId: string) => {
+    const upstreamEdge = edgesRef.current.find((e) => e.target === nodeId);
+    if (!upstreamEdge) return [] as Array<Record<string, unknown>>;
+    const upstreamNode = nodesRef.current.find((n) => n.id === upstreamEdge.source);
+    if (!upstreamNode) return [] as Array<Record<string, unknown>>;
+    const result = upstreamNode.data?.result;
+    if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).scenes)) {
+      return (result as Record<string, unknown>).scenes as Array<Record<string, unknown>>;
+    }
+    return [] as Array<Record<string, unknown>>;
+  },
+  []
+);
+
+// 修改后 - 直接定义函数，不使用 useCallback
+function getUpstreamResult(nodeId: string): string | null {
+  const upstreamEdge = edgesRef.current.find((e) => e.target === nodeId);
+  if (!upstreamEdge) return null;
+  const upstreamNode = nodesRef.current.find((n) => n.id === upstreamEdge.source);
+  if (!upstreamNode) return null;
+  const result = upstreamNode.data?.result;
+  if (result && typeof result === 'object') {
+    if ('content' in result) return (result as { content: string }).content;
+    if ('imageUrl' in result) return (result as { imageUrl: string }).imageUrl;
+    if ('videoUrl' in result) return (result as { videoUrl: string }).videoUrl;
+  }
+  if (typeof result === 'string') return result;
+  return (upstreamNode.data?.description as string) || null;
+}
+
+function getUpstreamScenes(nodeId: string): Array<Record<string, unknown>> {
+  const upstreamEdge = edgesRef.current.find((e) => e.target === nodeId);
+  if (!upstreamEdge) return [];
+  const upstreamNode = nodesRef.current.find((n) => n.id === upstreamEdge.source);
+  if (!upstreamNode) return [];
+  const result = upstreamNode.data?.result;
+  if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).scenes)) {
+    return (result as Record<string, unknown>).scenes as Array<Record<string, unknown>>;
+  }
+  return [];
+}
+```
+
+---
+
+## 🔧 问题2：循环中状态更新不一致（致命）
+
+### 问题描述
+在 `text2image` 节点执行循环中，`setNodes` 调用后没有同步更新 `nodesRef.current`，导致后续迭代使用过时数据。
+
+### 问题位置
+[src/app/workspace/page.tsx:410-440](file:///d:/nvwa_projects/src/app/workspace/page.tsx#L410)
+
+### 修复方案
+
+```typescript
+// 修改前
+for (let i = 0; i < scenes.length; i++) {
+  const scene = scenes[i];
+  const prompt = String(scene?.description || scene?.visual || '');
+  if (!prompt) {
+    generated.push({ error: '缺少提示词' });
+    continue;
+  }
+  try {
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, ratio, count: 1 }),
+    });
+    const d = await res.json();
+    if (d.imageUrls && d.imageUrls.length > 0) {
+      generated.push({ imageUrl: d.imageUrls[0] });
+    } else {
+      generated.push({ error: d.error || '生成失败' });
+    }
+  } catch (e) {
+    generated.push({ error: e instanceof Error ? e.message : '生成失败' });
+  }
+  setNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: `进行中 (${i + 1}/${scenes.length})`, generated } } : n)));
+}
+const result = { generated, scenes, imageUrl: generated[0]?.imageUrl };
+setNodes((prev) => {
+  const next = prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: '已完成', result } } : n));
+  nodesRef.current = next;
+  return next;
+});
+return true;
+
+// 修改后
+for (let i = 0; i < scenes.length; i++) {
+  // 检查是否已取消
+  if (runAbortRef.current) {
+    setNodes((prev) => {
+      const next = prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: '待处理', result: '已取消' } } : n));
+      nodesRef.current = next;
+      return next;
+    });
+    return false;
+  }
+
+  const scene = scenes[i];
+  const prompt = String(scene?.description || scene?.visual || '');
+  if (!prompt) {
+    generated.push({ error: '缺少提示词' });
+    // 同步更新 ref
+    setNodes((prev) => {
+      const next = prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: `进行中 (${i + 1}/${scenes.length})`, generated } } : n));
+      nodesRef.current = next;
+      return next;
+    });
+    continue;
+  }
+  try {
+    const res = await apiFetch('/api/ai/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, ratio, count: 1 }),
+    });
+    const d = await res.json();
+    if (d.imageUrls && d.imageUrls.length > 0) {
+      generated.push({ imageUrl: d.imageUrls[0] });
+    } else {
+      generated.push({ error: d.error || '生成失败' });
+    }
+  } catch (e) {
+    generated.push({ error: e instanceof Error ? e.message : '生成失败' });
+  }
+  // 同步更新 ref
+  setNodes((prev) => {
+    const next = prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: `进行中 (${i + 1}/${scenes.length})`, generated } } : n));
+    nodesRef.current = next;
+    return next;
+  });
+}
+const result = { generated, scenes, imageUrl: generated[0]?.imageUrl };
+setNodes((prev) => {
+  const next = prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, status: '已完成', result } } : n));
+  nodesRef.current = next;
+  return next;
+});
+return true;
+```
+
+---
+
+## 🔧 问题3：重复调用 getUpstreamResult（严重）
+
+### 问题描述
+`image2video` 节点执行时重复调用 `getUpstreamResult`。
+
+### 问题位置
+[src/app/workspace/page.tsx:446-449](file:///d:/nvwa_projects/src/app/workspace/page.tsx#L446)
+
+### 修复方案
+
+```typescript
+// 修改前
+} else if (type === 'text2video' || type === 'image2video') {
+  const upstream = getUpstreamResult(nodeId);
+  const upstreamImg = type === 'image2video' ? getUpstreamResult(nodeId) : '';
+  const ratio = (nodeData.ratio as string) || '16:9';
+  const videoBody = { prompt: upstream || description || label || '短剧片段', imageUrl: type === 'image2video' ? (upstreamImg || '') : '', ratio };
+
+
+// 修改后
+} else if (type === 'text2video' || type === 'image2video') {
+  const upstream = getUpstreamResult(nodeId);
+  const upstreamImg = type === 'image2video' ? upstream : '';  // 复用变量，避免重复调用
+  const ratio = (nodeData.ratio as string) || '16:9';
+  const videoBody = { prompt: upstream || description || label || '短剧片段', imageUrl: type === 'image2video' ? (upstreamImg || '') : '', ratio };
+```
+
+---
+
+## 🔧 问题4：并行执行状态竞争（严重）
+
+### 问题描述
+`handleRunAll` 使用 `Promise.allSettled` 并行执行节点，但 `inDegree` 计算方式存在竞态条件。
+
+### 问题位置
+[src/app/workspace/page.tsx:580-619](file:///d:/nvwa_projects/src/app/workspace/page.tsx#L580)
+
+### 修复方案
+
+```typescript
+// 修改前
+const handleRunAll = async () => {
+  if (isRunningAll || nodes.length === 0) return;
+  runAbortRef.current = false;
+  setIsRunningAll(true);
+  setNodes((prev) => {
+    const next = prev.map((n) => ({ ...n, data: { ...n.data, status: '待开始', result: undefined } }));
+    nodesRef.current = next;
+    return next;
+  });
+  // Build in-degree map using refs to avoid closure staleness
+  const inDegree = new Map<string, number>();
+  nodesRef.current.forEach((n) => inDegree.set(n.id, 0));
+  edgesRef.current.forEach((e) => { inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1); });
+  // Start with nodes that have no dependencies
+  let queue = nodesRef.current.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
+  while (queue.length > 0 && !runAbortRef.current) {
+    const batch = [...queue];
+    queue = [];
+    await Promise.allSettled(
+      batch.map(async (nodeId) => {
+        if (runAbortRef.current) return;
+        const ok = await executeNodeById(nodeId);
+        if (runAbortRef.current) return;
+        if (!ok) return;
+        // Decrease in-degree of downstream nodes only on success
+        const downstream = edgesRef.current.filter((e) => e.source === nodeId).map((e) => e.target);
+        for (const targetId of downstream) {
+          const remaining = inDegree.get(targetId) || 0;
+          if (remaining > 0) {
+            inDegree.set(targetId, remaining - 1);
+            if (remaining - 1 === 0) { queue.push(targetId); }
+          }
+        }
+      })
+    );
+  }
+  setIsRunningAll(false);
+  if (!runAbortRef.current) { toast.success('工作流运行完成'); }
+  else { toast.info('工作流已取消'); }
+};
+
+// 修改后 - 改用串行执行确保正确性
+const handleRunAll = async () => {
+  if (isRunningAll || nodes.length === 0) return;
+  runAbortRef.current = false;
+  setIsRunningAll(true);
+  setNodes((prev) => {
+    const next = prev.map((n) => ({ ...n, data: { ...n.data, status: '待开始', result: undefined } }));
+    nodesRef.current = next;
+    return next;
+  });
+
+  // 构建拓扑排序后的执行队列
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  nodesRef.current.forEach((n) => {
+    inDegree.set(n.id, 0);
+    adjacency.set(n.id, []);
+  });
+  edgesRef.current.forEach((e) => {
+    inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+    adjacency.get(e.source)?.push(e.target);
+  });
+
+  // 使用队列进行拓扑排序执行
+  let queue = nodesRef.current.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
+
+  while (queue.length > 0 && !runAbortRef.current) {
+    const nodeId = queue.shift()!;
+
+    if (runAbortRef.current) break;
+
+    const ok = await executeNodeById(nodeId);
+
+    if (runAbortRef.current) break;
+
+    // 只有执行成功才处理下游节点
+    if (ok) {
+      const downstream = adjacency.get(nodeId) || [];
+      for (const targetId of downstream) {
+        const remaining = (inDegree.get(targetId) || 0) - 1;
+        inDegree.set(targetId, remaining);
+        if (remaining === 0) {
+          queue.push(targetId);
+        }
+      }
+    } else {
+      // 节点执行失败：标记下游所有节点为失败
+      const failedNodes = new Set<string>();
+      const markFailed = (id: string) => {
+        if (failedNodes.has(id)) return;
+        failedNodes.add(id);
+        (adjacency.get(id) || []).forEach(markFailed);
+      };
+      downstream.forEach(markFailed);
+
+      if (failedNodes.size > 0) {
+        setNodes((prev) => {
+          const next = prev.map((n) =>
+            failedNodes.has(n.id)
+              ? { ...n, data: { ...n.data, status: '失败', result: '前置节点执行失败' } }
+              : n
+          );
+          nodesRef.current = next;
+          return next;
+        });
+      }
+      break;  // 遇到失败则终止执行
+    }
+  }
+
+  setIsRunningAll(false);
+  if (!runAbortRef.current) { toast.success('工作流运行完成'); }
+  else { toast.info('工作流已取消'); }
+};
+```
+
+---
+
+## 🔧 问题5：输出节点缺少错误处理（中等）
+
+### 问题描述
+输出节点没有检查上游节点是否成功执行，总是返回 true。
+
+### 问题位置
+[src/app/workspace/page.tsx:352-364](file:///d:/nvwa_projects/src/app/workspace/page.tsx#L352)
+
+### 修复方案
+
+```typescript
+// 修改前
+if (type === 'output') {
+  const upstream = getUpstreamResult(nodeId);
+  const content = upstream || description || '【' + label + '】\n暂无上游内容，请确保前置节点已执行。';
+  setNodes((prev) => {
+    const next = prev.map((n) =>
+      n.id === nodeId
+        ? { ...n, data: { ...n.data, status: '已完成', result: content } }
+        : n
+    );
+    nodesRef.current = next;
+    return next;
+  });
+  return true;
+}
+
+// 修改后
+if (type === 'output') {
+  const upstream = getUpstreamResult(nodeId);
+  
+  // 检查上游是否有有效内容
+  if (!upstream) {
+    const failMsg = '【' + label + '】\n暂无上游内容，请确保前置节点已执行。';
+    setNodes((prev) => {
+      const next = prev.map((n) =>
+        n.id === nodeId
+          ? { ...n, data: { ...n.data, status: '失败', result: failMsg } }
+          : n
+      );
+      nodesRef.current = next;
+      return next;
+    });
+    return false;
+  }
+
+  // 检查上游节点状态
+  const upstreamEdge = edgesRef.current.find((e) => e.target === nodeId);
+  if (upstreamEdge) {
+    const upstreamNode = nodesRef.current.find((n) => n.id === upstreamEdge.source);
+    const upstreamStatus = upstreamNode?.data?.status as string;
+    if (upstreamStatus === '失败' || upstreamStatus === '待处理') {
+      const failMsg = '【' + label + '】\n上游节点执行失败，无法输出内容。';
+      setNodes((prev) => {
+        const next = prev.map((n) =>
+          n.id === nodeId
+            ? { ...n, data: { ...n.data, status: '失败', result: failMsg } }
+            : n
+        );
+        nodesRef.current = next;
+        return next;
+      });
+      return false;
+    }
+  }
+
+  const content = upstream || description || '【' + label + '】\n暂无上游内容。';
+  setNodes((prev) => {
+    const next = prev.map((n) =>
+      n.id === nodeId
+        ? { ...n, data: { ...n.data, status: '已完成', result: content } }
+        : n
+    );
+    nodesRef.current = next;
+    return next;
+  });
+  return true;
+}
+```
+
+---
+
+## ✅ 验证清单
+
+修复后必须验证以下场景：
+
+| 测试场景 | 预期结果 |
+|----------|----------|
+| 单节点执行 | 节点状态正确更新，结果正确传递给下游 |
+| 取消工作流 | 所有正在执行的节点立即停止 |
+| 节点执行失败 | 下游节点标记为失败，工作流终止 |
+| 并行执行 | 节点按拓扑顺序正确执行 |
+| 输出节点 | 正确反映上游节点的执行状态 |
+
+---
+
+## ⚠️ 禁止事项
+
+1. **禁止修改** UI 渲染逻辑
+2. **禁止修改** 节点类型定义
+3. **禁止修改** API 接口调用方式
+4. **禁止修改** 工作流的保存/加载逻辑
+5. **禁止** 删除必要的错误日志

@@ -69,6 +69,50 @@ export interface PlatformConfig {
   platform: string;
 }
 
+// 环境变量到平台的映射
+const ENV_KEY_MAP: Record<string, string> = {
+  aliyun: "DASHSCOPE_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  kimi: "KIMI_API_KEY",
+  jimeng: "JIMENG_ACCESS_KEY",  // 即梦使用火山引擎双密钥
+  vidu: "VIDU_API_KEY",
+  kling: "KLING_API_KEY",
+};
+
+// 火山引擎平台的 Secret Key 环境变量映射
+const ENV_SECRET_KEY_MAP: Record<string, string> = {
+  jimeng: "JIMENG_SECRET_KEY",
+  kling: "KLING_SECRET_KEY",
+};
+
+/**
+ * 从环境变量获取平台配置
+ */
+function getPlatformConfigFromEnv(platform: string): PlatformConfig | null {
+  const envKey = ENV_KEY_MAP[platform];
+  if (!envKey) return null;
+  
+  let apiKey = process.env[envKey];
+  
+  // 即梦平台：兼容旧的环境变量名 JIMENG_API_KEY
+  if (platform === 'jimeng' && !apiKey) {
+    apiKey = process.env.JIMENG_API_KEY;
+  }
+  
+  if (!apiKey) return null;
+  
+  // 获取 Secret Key（火山引擎平台需要）
+  const secretEnvKey = ENV_SECRET_KEY_MAP[platform];
+  const secretKey = secretEnvKey ? process.env[secretEnvKey] : undefined;
+  
+  return {
+    apiKey,
+    secretKey,
+    baseUrl: PLATFORM_BASE_URLS[platform] || "",
+    platform,
+  };
+}
+
 // 缓存
 let platformKeysCache: Record<string, PlatformConfig> = {};
 let cacheTime = 0;
@@ -101,7 +145,13 @@ export async function getPlatformConfig(platform: string): Promise<PlatformConfi
       .single();
     
     if (error || !data) {
-      // 如果数据库中没有，返回null
+      // 如果数据库中没有，尝试从环境变量获取
+      const envConfig = getPlatformConfigFromEnv(platform);
+      if (envConfig) {
+        platformKeysCache[platform] = envConfig;
+        cacheTime = now;
+        return envConfig;
+      }
       return null;
     }
     

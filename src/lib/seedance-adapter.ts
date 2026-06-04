@@ -9,8 +9,8 @@ import { logger } from "@/lib/logger";
 const AIREITER_SUBMIT_URL = "https://aireiter.com/api/openapi/submit";
 const AIREITER_QUERY_URL = "https://aireiter.com/api/openapi/query";
 
-// Seedance 2.0 API Key（从文档获取）
-const SEEDANCE_API_KEY = "sk-1cad4cf7mpks1xvbwJcPqccq1k8Eg-TWpSndBNTESlBpbH8tiHBf";
+// Seedance 2.0 API Key（从环境变量读取）
+const SEEDANCE_API_KEY = process.env.SEEDANCE_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 
 // 支持的模型变体
 export const SEEDANCE_MODELS = {

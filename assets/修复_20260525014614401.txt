@@ -1,0 +1,1616 @@
+
+
+# 🚨 第七轮检测（AI生成接口限流与成本控制） - 详细修复指令
+
+## 📊 检测结果
+
+### 一、AI接口现状分析
+
+| 接口类型 | 接口数量 | 风险等级 |
+|---------|---------|---------|
+| **图像生成** | generate-image, generate-character-image, edit-image | 🔴 极高 |
+| **视频生成** | generate-video, edit-video | 🔴 极高 |
+| **文本生成** | chat, generate-script, generate-character, optimize-prompt | 🟠 高 |
+| **内容提取** | extract-stream, batch-extract, extract-roles | 🟠 高 |
+| **分析类** | analyze-episodes, consistency-check, compliance-check | 🟡 中 |
+
+### 二、当前保护措施
+
+| 已有保护 | 状态 | 说明 |
+|---------|------|------|
+| 积分扣费 | ✅ 已有 | deductCredits() 函数 |
+| 用户认证 | ✅ 已有 | getUserId() 检查 |
+| 模型定价 | ✅ 已有 | model_pricing 表 |
+| 交易记录 | ✅ 已有 | credit_transactions 表 |
+
+### 三、缺失的安全措施
+
+| 缺失项 | 风险 | 影响 |
+|-------|------|------|
+| **用户级请求限流** | 🔴 极高 | 单用户可无限请求 |
+| **IP级限流** | 🔴 极高 | 单IP可刷爆资源 |
+| **Token输入限制** | 🟠 高 | 超长输入导致OOM |
+| **请求超时控制** | 🟠 高 | 长时间占用连接 |
+| **幂等性控制** | 🟡 中 | 重复请求重复扣费 |
+| **熔断机制** | 🟡 中 | 单点故障影响全局 |
+| **重试机制** | 🟡 中 | 临时故障无法恢复 |
+| **任务队列** | 🟡 中 | 高峰期资源抢占 |
+| **成本预警** | 🟡 中 | 成本失控无法感知 |
+
+---
+
+## 🛠️ 修复方案（分阶段执行）
+
+### 第一阶段：用户级与IP级限流（核心）
+
+#### 1.1 创建AI限流中间件
+
+**创建文件：** `/src/lib/security/ai-rate-limiter.ts`
+
+```typescript
+/**
+ * AI接口限流服务
+ * 支持用户级限流和IP级限流
+ */
+
+import { NextRequest } from "next/server";
+
+/**
+ * 限流配置
+ */
+export interface RateLimitConfig {
+  windowMs: number;       // 时间窗口（毫秒）
+  maxRequests: number;    // 最大请求数
+  maxTokens?: number;     // 最大Token数（可选）
+}
+
+/**
+ * 限流策略配置
+ */
+export const AI_RATE_LIMITS: Record<string, RateLimitConfig> = {
+  // 图像生成 - 资源密集型，限制较严
+  "generate-image": { windowMs: 60000, maxRequests: 10 },           // 每分钟10次
+  "generate-character-image": { windowMs: 60000, maxRequests: 10 },
+  "edit-image": { windowMs: 60000, maxRequests: 10 },
+  
+  // 视频生成 - 资源最密集，限制最严
+  "generate-video": { windowMs: 60000, maxRequests: 5 },            // 每分钟5次
+  "edit-video": { windowMs: 60000, maxRequests: 5 },
+  
+  // 3D生成 - 资源密集
+  "generate-3d": { windowMs: 60000, maxRequests: 3 },
+  
+  // 文本生成 - 限制稍宽松
+  "chat": { windowMs: 60000, maxRequests: 30 },
+  "generate-script": { windowMs: 60000, maxRequests: 10 },
+  "generate-character": { windowMs: 60000, maxRequests: 10 },
+  "optimize-prompt": { windowMs: 60000, maxRequests: 20 },
+  
+  // 内容提取 - 限制适中
+  "extract-stream": { windowMs: 60000, maxRequests: 15 },
+  "batch-extract": { windowMs: 60000, maxRequests: 5 },
+  "extract-roles": { windowMs: 60000, maxRequests: 10 },
+  
+  // 分析类 - 限制适中
+  "analyze-episodes": { windowMs: 60000, maxRequests: 10 },
+  "consistency-check": { windowMs: 60000, maxRequests: 10 },
+  "compliance-check": { windowMs: 60000, maxRequests: 20 },
+};
+
+// IP级全局限流（更严格）
+const GLOBAL_IP_RATE_LIMIT = {
+  windowMs: 60000,
+  maxRequests: 100,  // 每分钟每个IP最多100次
+};
+
+/**
+ * 限流记录
+ */
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+  tokensUsed?: number;
+}
+
+// 内存存储（生产环境应使用Redis）
+const userRateStore = new Map<string, Map<string, RateLimitRecord>>();
+const ipRateStore = new Map<string, RateLimitRecord>();
+
+/**
+ * 获取客户端标识
+ */
+function getClientIdentifier(request: NextRequest): { userId: string | null; ip: string } {
+  // 优先使用用户ID
+  const authHeader = request.headers.get("authorization");
+  let userId: string | null = null;
+  
+  // 简单解析（实际应使用完整的认证逻辑）
+  if (authHeader?.startsWith("Bearer ")) {
+    // TODO: 从JWT解析用户ID
+    // 临时使用Bearer token的前20字符作为标识
+    userId = authHeader.slice(7, 27);
+  }
+  
+  // 获取IP
+  const ip = 
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    request.ip ||
+    "unknown";
+  
+  return { userId, ip };
+}
+
+/**
+ * 检查用户级限流
+ */
+export function checkUserRateLimit(
+  userId: string | null,
+  endpoint: string
+): { allowed: boolean; remaining: number; resetAfter: number } {
+  if (!userId) {
+    // 未登录用户使用IP限流
+    return { allowed: true, remaining: 0, resetAfter: 0 };
+  }
+
+  const config = AI_RATE_LIMITS[endpoint];
+  if (!config) {
+    return { allowed: true, remaining: 999, resetAfter: 0 };
+  }
+
+  const key = `${userId}:${endpoint}`;
+  const now = Date.now();
+  
+  // 获取或创建记录
+  let userMap = userRateStore.get(userId);
+  if (!userMap) {
+    userMap = new Map();
+    userRateStore.set(userId, userMap);
+  }
+  
+  let record = userMap.get(endpoint);
+  
+  // 检查是否需要重置
+  if (!record || now >= record.resetAt) {
+    record = { count: 1, resetAt: now + config.windowMs };
+    userMap.set(endpoint, record);
+    return { allowed: true, remaining: config.maxRequests - 1, resetAfter: config.windowMs };
+  }
+  
+  // 检查限制
+  if (record.count >= config.maxRequests) {
+    return { allowed: false, remaining: 0, resetAfter: record.resetAt - now };
+  }
+  
+  // 增加计数
+  record.count += 1;
+  userMap.set(endpoint, record);
+  
+  return { allowed: true, remaining: config.maxRequests - record.count, resetAfter: record.resetAt - now };
+}
+
+/**
+ * 检查IP级全局限流
+ */
+export function checkGlobalIpRateLimit(ip: string): { allowed: boolean; remaining: number; resetAfter: number } {
+  const now = Date.now();
+  const record = ipRateStore.get(ip);
+  
+  if (!record || now >= record.resetAt) {
+    ipRateStore.set(ip, { count: 1, resetAt: now + GLOBAL_IP_RATE_LIMIT.windowMs });
+    return { 
+      allowed: true, 
+      remaining: GLOBAL_IP_RATE_LIMIT.maxRequests - 1, 
+      resetAfter: GLOBAL_IP_RATE_LIMIT.windowMs 
+    };
+  }
+  
+  if (record.count >= GLOBAL_IP_RATE_LIMIT.maxRequests) {
+    return { allowed: false, remaining: 0, resetAfter: record.resetAt - now };
+  }
+  
+  record.count += 1;
+  ipRateStore.set(ip, record);
+  
+  return { allowed: true, remaining: GLOBAL_IP_RATE_LIMIT.maxRequests - record.count, resetAfter: record.resetAt - now };
+}
+
+/**
+ * 完整的限流检查
+ */
+export function checkRateLimit(
+  request: NextRequest,
+  endpoint: string
+): { 
+  allowed: boolean; 
+  reason?: string;
+  headers: Record<string, string>;
+} {
+  const { userId, ip } = getClientIdentifier(request);
+  
+  // 1. 先检查IP级全局限流
+  const ipCheck = checkGlobalIpRateLimit(ip);
+  if (!ipCheck.allowed) {
+    return {
+      allowed: false,
+      reason: "请求过于频繁，请稍后再试",
+      headers: {
+        "X-RateLimit-Limit": String(GLOBAL_IP_RATE_LIMIT.maxRequests),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": String(ipCheck.resetAfter),
+        "Retry-After": String(Math.ceil(ipCheck.resetAfter / 1000)),
+      },
+    };
+  }
+  
+  // 2. 检查用户级限流
+  const userCheck = checkUserRateLimit(userId, endpoint);
+  if (!userCheck.allowed) {
+    return {
+      allowed: false,
+      reason: `${endpoint} 请求过于频繁，请在 ${Math.ceil(userCheck.resetAfter / 1000)} 秒后重试`,
+      headers: {
+        "X-RateLimit-Limit": String(AI_RATE_LIMITS[endpoint]?.maxRequests || 0),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": String(userCheck.resetAfter),
+        "Retry-After": String(Math.ceil(userCheck.resetAfter / 1000)),
+      },
+    };
+  }
+  
+  return {
+    allowed: true,
+    headers: {
+      "X-RateLimit-Limit": String(AI_RATE_LIMITS[endpoint]?.maxRequests || 0),
+      "X-RateLimit-Remaining": String(userCheck.remaining),
+    },
+  };
+}
+
+/**
+ * 清理过期的限流记录（防止内存泄漏）
+ */
+export function cleanupRateLimitStore() {
+  const now = Date.now();
+  
+  // 清理IP记录
+  for (const [ip, record] of ipRateStore) {
+    if (now >= record.resetAt) {
+      ipRateStore.delete(ip);
+    }
+  }
+  
+  // 清理用户记录
+  for (const [userId, userMap] of userRateStore) {
+    for (const [endpoint, record] of userMap) {
+      if (now >= record.resetAt) {
+        userMap.delete(endpoint);
+      }
+    }
+    if (userMap.size === 0) {
+      userRateStore.delete(userId);
+    }
+  }
+}
+
+// 定期清理（每5分钟）
+setInterval(cleanupRateLimitStore, 5 * 60 * 1000);
+```
+
+#### 1.2 创建AI限流中间件包装函数
+
+**创建文件：** `/src/lib/security/with-ai-rate-limit.ts`
+
+```typescript
+/**
+ * AI接口限流中间件
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit } from "./ai-rate-limiter";
+
+/**
+ * 为API路由添加限流保护
+ */
+export function withAIRateLimit(
+  handler: (request: NextRequest) => Promise<NextResponse>,
+  endpoint: string
+) {
+  return async (request: NextRequest) => {
+    // 1. 检查限流
+    const rateCheck = checkRateLimit(request, endpoint);
+    
+    if (!rateCheck.allowed) {
+      console.warn(`[RateLimit] Request blocked for ${endpoint}:`, rateCheck.reason);
+      
+      return NextResponse.json(
+        { success: false, error: rateCheck.reason },
+        { 
+          status: 429, 
+          headers: rateCheck.headers 
+        }
+      );
+    }
+    
+    // 2. 执行原始处理
+    const response = await handler(request);
+    
+    // 3. 在响应头中添加限流信息
+    const finalHeaders = new Headers(response.headers);
+    for (const [key, value] of Object.entries(rateCheck.headers)) {
+      finalHeaders.set(key, value);
+    }
+    
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: finalHeaders,
+    });
+  };
+}
+```
+
+---
+
+### 第二阶段：Token输入限制（高优先级）
+
+#### 2.1 创建Token计数和限制工具
+
+**创建文件：** `/src/lib/security/token-limiter.ts`
+
+```typescript
+/**
+ * Token输入限制工具
+ * 防止超长输入导致OOM和成本失控
+ */
+
+/**
+ * Token限制配置（按接口类型）
+ */
+export const TOKEN_LIMITS: Record<string, { input: number; output: number }> = {
+  // 文本生成
+  "chat": { input: 128000, output: 8192 },
+  "generate-script": { input: 64000, output: 32768 },
+  "generate-character": { input: 32000, output: 8192 },
+  "optimize-prompt": { input: 16000, output: 2048 },
+  
+  // 内容提取
+  "extract-stream": { input: 8000, output: 4096 },
+  "batch-extract": { input: 8000, output: 4096 },
+  "extract-roles": { input: 8000, output: 4096 },
+  
+  // 分析类
+  "analyze-episodes": { input: 32000, output: 8192 },
+  "consistency-check": { input: 16000, output: 4096 },
+  "compliance-check": { input: 8000, output: 4096 },
+  
+  // 生成类
+  "split-scenes": { input: 64000, output: 8192 },
+  "generate-full-script": { input: 16000, output: 65536 },
+};
+
+/**
+ * 简单的Token估算（中文按字符数*2估算，英文按单词数*1.3估算）
+ * 实际应使用专门的tokenizer
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  
+  let tokens = 0;
+  
+  for (const char of text) {
+    // 中文：每个字符约2个token
+    if (/[\u4e00-\u9fff]/.test(char)) {
+      tokens += 2;
+    } else if (/\s/.test(char)) {
+      // 空格
+      tokens += 0.5;
+    } else {
+      // 其他字符
+      tokens += 1;
+    }
+  }
+  
+  return Math.ceil(tokens);
+}
+
+/**
+ * 截断文本到指定token数
+ */
+export function truncateToTokenLimit(text: string, maxTokens: number): string {
+  if (!text) return "";
+  
+  const estimatedTokens = estimateTokens(text);
+  if (estimatedTokens <= maxTokens) {
+    return text;
+  }
+  
+  // 按比例截断
+  const ratio = maxTokens / estimatedTokens;
+  const targetLength = Math.floor(text.length * ratio);
+  
+  // 二分查找精确截断点
+  let low = 0;
+  let high = text.length;
+  
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    if (estimateTokens(text.slice(0, mid)) <= maxTokens) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  
+  return text.slice(0, low) + "...";
+}
+
+/**
+ * 验证输入是否超限
+ */
+export function validateTokenLimit(
+  inputs: Record<string, unknown>,
+  endpoint: string
+): { valid: boolean; error?: string; truncated?: Record<string, string> } {
+  const limits = TOKEN_LIMITS[endpoint];
+  if (!limits) {
+    return { valid: true };
+  }
+
+  const truncated: Record<string, string> = {};
+  
+  for (const [key, value] of Object.entries(inputs)) {
+    if (typeof value === "string") {
+      const tokens = estimateTokens(value);
+      
+      if (tokens > limits.input) {
+        // 自动截断
+        truncated[key] = truncateToTokenLimit(value, limits.input);
+      }
+    }
+    
+    // 递归处理嵌套对象
+    if (typeof value === "object" && value !== null) {
+      const nestedResult = validateTokenLimit(value as Record<string, unknown>, endpoint);
+      if (!nestedResult.valid) {
+        return nestedResult;
+      }
+    }
+  }
+  
+  return {
+    valid: true,
+    truncated: Object.keys(truncated).length > 0 ? truncated : undefined,
+  };
+}
+```
+
+---
+
+### 第三阶段：超时控制和熔断器（核心）
+
+#### 3.1 创建超时控制工具
+
+**创建文件：** `/src/lib/security/request-timeout.ts`
+
+```typescript
+/**
+ * 请求超时控制工具
+ */
+
+import { logger } from "@/lib/logger";
+
+/**
+ * 超时配置（毫秒）
+ */
+export const REQUEST_TIMEOUTS = {
+  // 快速操作
+  "chat": 60000,                    // 1分钟
+  "optimize-prompt": 30000,         // 30秒
+  
+  // 中等耗时
+  "extract-stream": 120000,          // 2分钟
+  "extract-roles": 120000,           // 2分钟
+  "consistency-check": 60000,        // 1分钟
+  "compliance-check": 30000,         // 30秒
+  
+  // 长时间运行
+  "generate-image": 180000,           // 3分钟（异步任务）
+  "edit-image": 180000,              // 3分钟
+  "generate-character-image": 180000,// 3分钟
+  
+  // 视频/3D（极长）
+  "generate-video": 300000,          // 5分钟（异步任务）
+  "edit-video": 300000,              // 5分钟
+  "generate-3d": 300000,             // 5分钟
+  
+  // 批量操作
+  "batch-extract": 300000,           // 5分钟
+  
+  // 默认超时
+  "default": 60000,
+};
+
+/**
+ * 带超时的fetch封装
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const timeout = options.timeout || REQUEST_TIMEOUTS.default;
+  const controller = new AbortController();
+  
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeout);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`请求超时（${timeout}ms）`);
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * 带超时的Promise封装
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operationName?: string
+): Promise<T> {
+  const name = operationName || "Operation";
+  
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${name} 超时（${timeoutMs}ms）`)), timeoutMs)
+    ),
+  ]);
+}
+```
+
+#### 3.2 创建熔断器
+
+**创建文件：** `/src/lib/security/circuit-breaker.ts`
+
+```typescript
+/**
+ * 熔断器实现
+ * 用于防止连续失败导致的服务崩溃
+ */
+
+type CircuitState = "closed" | "open" | "half-open";
+
+interface CircuitBreakerConfig {
+  failureThreshold: number;  // 失败次数阈值
+  successThreshold: number;  // 成功次数阈值（用于恢复）
+  timeout: number;           // 熔断持续时间（毫秒）
+}
+
+interface CircuitBreakerStats {
+  failures: number;
+  successes: number;
+  state: CircuitState;
+  lastFailure: number;
+  lastStateChange: number;
+}
+
+/**
+ * 熔断器类
+ */
+export class CircuitBreaker {
+  private config: CircuitBreakerConfig;
+  private stats: CircuitBreakerStats;
+  
+  constructor(config: Partial<CircuitBreakerConfig> = {}) {
+    this.config = {
+      failureThreshold: config.failureThreshold ?? 5,
+      successThreshold: config.successThreshold ?? 3,
+      timeout: config.timeout ?? 60000, // 默认1分钟
+    };
+    
+    this.stats = {
+      failures: 0,
+      successes: 0,
+      state: "closed",
+      lastFailure: 0,
+      lastStateChange: Date.now(),
+    };
+  }
+  
+  /**
+   * 执行受保护的函数
+   */
+  async execute<T>(
+    operation: () => Promise<T>,
+    fallback?: () => Promise<T>
+  ): Promise<T> {
+    // 检查熔断状态
+    if (this.stats.state === "open") {
+      // 检查是否应该转换到半开状态
+      if (Date.now() - this.stats.lastStateChange >= this.config.timeout) {
+        this.stats.state = "half-open";
+        this.stats.lastStateChange = Date.now();
+        logger.info(`[CircuitBreaker] State changed to half-open`);
+      } else {
+        // 熔断中，返回降级响应
+        if (fallback) {
+          logger.warn(`[CircuitBreaker] Circuit open, executing fallback`);
+          return fallback();
+        }
+        throw new Error("服务暂时不可用，请稍后重试");
+      }
+    }
+    
+    try {
+      const result = await operation();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      
+      if (this.stats.state === "half-open") {
+        // 半开状态失败，重新打开熔断
+        if (fallback) {
+          return fallback();
+        }
+      }
+      
+      throw error;
+    }
+  }
+  
+  /**
+   * 记录成功
+   */
+  private onSuccess() {
+    this.stats.successes += 1;
+    
+    if (this.stats.state === "half-open") {
+      if (this.stats.successes >= this.config.successThreshold) {
+        this.stats.state = "closed";
+        this.stats.failures = 0;
+        this.stats.successes = 0;
+        this.stats.lastStateChange = Date.now();
+        logger.info(`[CircuitBreaker] Circuit closed, service recovered`);
+      }
+    } else {
+      // 成功时重置失败计数
+      this.stats.failures = 0;
+    }
+  }
+  
+  /**
+   * 记录失败
+   */
+  private onFailure() {
+    this.stats.failures += 1;
+    this.stats.lastFailure = Date.now();
+    
+    if (this.stats.state === "half-open") {
+      // 半开状态失败，重新打开熔断
+      this.stats.state = "open";
+      this.stats.lastStateChange = Date.now();
+      logger.warn(`[CircuitBreaker] Circuit reopened after failure in half-open state`);
+    } else if (this.stats.failures >= this.config.failureThreshold) {
+      // 达到阈值，打开熔断
+      this.stats.state = "open";
+      this.stats.lastStateChange = Date.now();
+      logger.error(`[CircuitBreaker] Circuit opened after ${this.stats.failures} failures`);
+    }
+  }
+  
+  /**
+   * 获取状态
+   */
+  getState(): CircuitState {
+    return this.stats.state;
+  }
+  
+  /**
+   * 重置熔断器
+   */
+  reset() {
+    this.stats = {
+      failures: 0,
+      successes: 0,
+      state: "closed",
+      lastFailure: 0,
+      lastStateChange: Date.now(),
+    };
+  }
+}
+
+// 全局熔断器实例
+export const globalCircuitBreakers = new Map<string, CircuitBreaker>();
+
+/**
+ * 获取或创建熔断器
+ */
+export function getCircuitBreaker(name: string, config?: Partial<CircuitBreakerConfig>): CircuitBreaker {
+  if (!globalCircuitBreakers.has(name)) {
+    globalCircuitBreakers.set(name, new CircuitBreaker(config));
+  }
+  return globalCircuitBreakers.get(name)!;
+}
+```
+
+---
+
+### 第四阶段：幂等性控制（中等优先级）
+
+#### 4.1 创建幂等性服务
+
+**创建文件：** `/src/lib/security/idempotent-service.ts`
+
+```typescript
+/**
+ * 幂等性控制服务
+ * 防止重复请求导致重复扣费
+ */
+
+import crypto from "crypto";
+
+interface IdempotentRecord {
+  key: string;
+  result: unknown;
+  timestamp: number;
+  expiresAt: number;
+}
+
+/**
+ * 幂等性服务
+ */
+class IdempotentService {
+  private cache: Map<string, IdempotentRecord> = new Map();
+  private ttl: number = 30 * 60 * 1000; // 30分钟有效期
+  
+  /**
+   * 生成幂等键
+   */
+  generateKey(...parts: string[]): string {
+    const data = parts.join(":");
+    return crypto.createHash("sha256").update(data).digest("hex").slice(0, 32);
+  }
+  
+  /**
+   * 检查请求是否已处理
+   */
+  get(key: string): unknown | null {
+    const record = this.cache.get(key);
+    
+    if (!record) {
+      return null;
+    }
+    
+    // 检查是否过期
+    if (Date.now() > record.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return record.result;
+  }
+  
+  /**
+   * 标记请求正在处理
+   * 返回是否是新请求
+   */
+  tryLock(key: string): boolean {
+    const existing = this.cache.get(key);
+    
+    if (existing && Date.now() <= existing.expiresAt) {
+      // 已存在且未过期，检查是否还在处理中
+      if (existing.result === "PROCESSING") {
+        return false; // 正在处理中
+      }
+      return false; // 已处理完成
+    }
+    
+    // 创建新记录
+    this.cache.set(key, {
+      key,
+      result: "PROCESSING",
+      timestamp: Date.now(),
+      expiresAt: Date.now() + this.ttl,
+    });
+    
+    return true;
+  }
+  
+  /**
+   * 完成请求处理
+   */
+  complete(key: string, result: unknown): void {
+    const record = this.cache.get(key);
+    
+    if (record && record.result === "PROCESSING") {
+      this.cache.set(key, {
+        ...record,
+        result,
+        timestamp: Date.now(),
+      });
+    }
+  }
+  
+  /**
+   * 标记请求失败
+   */
+  fail(key: string): void {
+    const record = this.cache.get(key);
+    
+    if (record) {
+      this.cache.delete(key);
+    }
+  }
+  
+  /**
+   * 清理过期记录
+   */
+  cleanup(): void {
+    const now = Date.now();
+    
+    for (const [key, record] of this.cache) {
+      if (now > record.expiresAt) {
+        this.cache.delete(key);
+      }
+    }
+  }
+  
+  /**
+   * 获取缓存统计
+   */
+  getStats(): { size: number; processing: number; completed: number } {
+    let processing = 0;
+    let completed = 0;
+    
+    for (const record of this.cache.values()) {
+      if (record.result === "PROCESSING") {
+        processing += 1;
+      } else {
+        completed += 1;
+      }
+    }
+    
+    return {
+      size: this.cache.size,
+      processing,
+      completed,
+    };
+  }
+}
+
+export const idempotentService = new IdempotentService();
+
+// 定期清理（每10分钟）
+setInterval(() => idempotentService.cleanup(), 10 * 60 * 1000);
+```
+
+---
+
+### 第五阶段：增强AI接口限流保护（核心）
+
+#### 5.1 修改 generate-image 接口
+
+**修改文件：** `/src/app/api/ai/generate-image/route.ts`
+
+```typescript
+// 在文件顶部添加导入
+import { checkRateLimit } from "@/lib/security/ai-rate-limiter";
+import { validateTokenLimit, truncateToTokenLimit } from "@/lib/security/token-limiter";
+import { idempotentService } from "@/lib/security/idempotent-service";
+
+// 修改 POST 函数
+
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  
+  try {
+    // 1. 获取用户ID
+    userId = await getUserId(request);
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "未登录" },
+        { status: 401 }
+      );
+    }
+
+    // 2. 限流检查
+    const rateCheck = checkRateLimit(request, "generate-image");
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: rateCheck.reason },
+        { 
+          status: 429, 
+          headers: rateCheck.headers 
+        }
+      );
+    }
+
+    // 3. 解析请求
+    const body = await request.json();
+    const {
+      prompt,
+      model,
+      size,
+      n = 1,
+      images,
+      referenceImages,
+      referenceImage,
+      enableSequential,
+      thinkingMode,
+      watermark,
+      seed,
+      idempotentKey, // 可选的幂等键
+    } = body;
+
+    // 4. Token限制检查
+    const tokenValidation = validateTokenLimit({ prompt }, "generate-image");
+    let finalPrompt = prompt;
+    if (tokenValidation.truncated?.prompt) {
+      finalPrompt = tokenValidation.truncated.prompt;
+      console.warn("[Generate Image] Prompt truncated due to token limit");
+    }
+
+    if (!finalPrompt) {
+      return NextResponse.json(
+        { error: "Prompt is required" },
+        { status: 400 }
+      );
+    }
+
+    // 5. 幂等性检查
+    if (idempotentKey) {
+      const idemKey = idempotentService.generateKey(userId, "generate-image", idempotentKey);
+      
+      if (!idempotentService.tryLock(idemKey)) {
+        return NextResponse.json(
+          { success: false, error: "请求正在处理中，请勿重复提交" },
+          { status: 409 }
+        );
+      }
+      
+      try {
+        // 实际处理...
+        const result = await processImageGeneration(/* ... */);
+        
+        idempotentService.complete(idemKey, result);
+        return NextResponse.json({ success: true, data: result });
+      } catch (error) {
+        idempotentService.fail(idemKey);
+        throw error;
+      }
+    }
+
+    // 6. 扣费检查（原有逻辑）
+    // ... (保留原有扣费逻辑)
+
+    // 7. 实际生成逻辑
+    // ... (保留原有生成逻辑)
+
+  } catch (error) {
+    console.error("Generate image error:", error);
+    
+    // 记录错误日志
+    logger.error("[Generate Image]", {
+      userId,
+      duration: Date.now() - startTime,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    
+    return NextResponse.json(
+      { success: false, error: error instanceof Error ? error.message : "Generate image failed" },
+      { status: 500 }
+    );
+  }
+}
+```
+
+#### 5.2 修改 generate-video 接口
+
+**修改文件：** `/src/app/api/ai/generate-video/route.ts`
+
+```typescript
+// 在文件顶部添加导入
+import { checkRateLimit } from "@/lib/security/ai-rate-limiter";
+import { validateTokenLimit } from "@/lib/security/token-limiter";
+
+// 修改 POST 函数，添加限流和Token检查
+
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
+  try {
+    // 1. 用户认证（原有）
+    const userId = await getUserId(request);
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "未登录" },
+        { status: 401 }
+      );
+    }
+
+    // 2. 限流检查
+    const rateCheck = checkRateLimit(request, "generate-video");
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: rateCheck.reason },
+        { 
+          status: 429, 
+          headers: rateCheck.headers 
+        }
+      );
+    }
+
+    // 3. 解析请求
+    const body = await request.json();
+    const {
+      prompt,
+      negativePrompt,
+      model = "happyhorse-1.0-t2v",
+      // ... 其他参数
+    } = body;
+
+    // 4. Token限制检查
+    const tokenValidation = validateTokenLimit(
+      { prompt: prompt || "", negativePrompt: negativePrompt || "" },
+      "generate-video"
+    );
+    
+    let finalPrompt = prompt;
+    if (tokenValidation.truncated?.prompt) {
+      finalPrompt = tokenValidation.truncated.prompt;
+    }
+
+    // 5. 扣费检查（原有）
+    // ... (保留原有扣费逻辑)
+
+    // 6. 实际生成逻辑
+    // ... (保留原有生成逻辑)
+
+  } catch (error) {
+    console.error("[Video API] Error:", error);
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : "生成失败",
+    }, { status: 500 });
+  }
+}
+```
+
+#### 5.3 修改 chat 接口
+
+**修改文件：** `/src/app/api/ai/chat/route.ts`
+
+```typescript
+// 在文件顶部添加导入
+import { checkRateLimit } from "@/lib/security/ai-rate-limiter";
+import { validateTokenLimit } from "@/lib/security/token-limiter";
+import { getCircuitBreaker } from "@/lib/security/circuit-breaker";
+
+// 修改 POST 函数
+
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
+  try {
+    // 1. 限流检查
+    const rateCheck = checkRateLimit(request, "chat");
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { error: rateCheck.reason },
+        { 
+          status: 429, 
+          headers: rateCheck.headers 
+        }
+      );
+    }
+
+    // 2. 解析请求
+    const { model, messages, stream = true } = await request.json();
+
+    if (!messages || !Array.isArray(messages)) {
+      return NextResponse.json(
+        { error: "Messages are required" },
+        { status: 400 }
+      );
+    }
+
+    // 3. Token限制检查
+    let totalContent = "";
+    for (const msg of messages) {
+      if (typeof msg.content === "string") {
+        totalContent += msg.content;
+      }
+    }
+    
+    const tokenValidation = validateTokenLimit({ totalContent }, "chat");
+    if (tokenValidation.truncated?.totalContent) {
+      // 截断最早的对话消息
+      const maxTokens = 128000;
+      let currentTokens = 0;
+      const truncatedMessages = [];
+      
+      // 从最新到最早处理
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        const content = msg.content || "";
+        const tokens = estimateTokens(content);
+        
+        if (currentTokens + tokens <= maxTokens) {
+          truncatedMessages.unshift(msg);
+          currentTokens += tokens;
+        } else {
+          break;
+        }
+      }
+      
+      messages = truncatedMessages;
+    }
+
+    // 4. 使用熔断器包装AI调用
+    const aiCircuitBreaker = getCircuitBreaker("chat-ai", {
+      failureThreshold: 3,
+      successThreshold: 2,
+      timeout: 30000,
+    });
+    
+    const { client, actualModel } = await getLLMClient(model || "qwen-plus");
+    
+    const completion = await aiCircuitBreaker.execute(
+      () => client.chat.completions.create({
+        model: actualModel,
+        messages: messages as any,
+        temperature: 0.7,
+        stream: true,
+      }),
+      () => {
+        // 降级响应
+        return {
+          choices: [{ message: { content: "服务暂时繁忙，请稍后重试" } }]
+        };
+      }
+    );
+
+    // 5. 流式响应（原有逻辑）
+    // ...
+
+  } catch (error) {
+    logger.error("Chat error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Chat failed" },
+      { status: 500 }
+    );
+  }
+}
+```
+
+---
+
+### 第六阶段：成本预警系统（中等优先级）
+
+#### 6.1 创建成本预警服务
+
+**创建文件：** `/src/lib/security/cost-alert.ts`
+
+```typescript
+/**
+ * 成本预警服务
+ * 用于监控AI调用成本，防止失控
+ */
+
+import { logger } from "@/lib/logger";
+
+// 预警阈值配置
+const COST_THRESHOLDS = {
+  // 用户级别（每小时）
+  userHourlyLimit: 100,      // 单用户每小时消费上限
+  userDailyLimit: 500,        // 单用户每天消费上限
+  
+  // 平台级别（每小时）
+  platformHourlyLimit: 1000,  // 平台每小时消费上限
+  platformDailyLimit: 10000,  // 平台每天消费上限
+};
+
+interface CostRecord {
+  userId: string;
+  amount: number;
+  timestamp: number;
+}
+
+// 内存存储（生产环境应使用Redis）
+const hourlyUserCosts = new Map<string, CostRecord[]>();
+const dailyUserCosts = new Map<string, CostRecord[]>();
+const hourlyPlatformCosts: CostRecord[] = [];
+const dailyPlatformCosts: CostRecord[] = [];
+
+class CostAlertService {
+  private alertWebhook: string | undefined = process.env.COST_ALERT_WEBHOOK;
+
+  /**
+   * 记录消费
+   */
+  record(userId: string, amount: number): { blocked: boolean; reason?: string } {
+    const now = Date.now();
+    const hourAgo = now - 3600000;
+    const dayAgo = now - 86400000;
+
+    // 1. 更新用户每小时消费
+    let userHourly = hourlyUserCosts.get(userId) || [];
+    userHourly = userHourly.filter(r => r.timestamp > hourAgo);
+    userHourly.push({ userId, amount, timestamp: now });
+    hourlyUserCosts.set(userId, userHourly);
+
+    const userHourlyTotal = userHourly.reduce((sum, r) => sum + r.amount, 0);
+
+    // 2. 检查用户每小时限额
+    if (userHourlyTotal > COST_THRESHOLDS.userHourlyLimit) {
+      this.sendAlert({
+        level: "warning",
+        title: "用户每小时消费超限",
+        message: `用户 ${userId} 过去1小时消费 ${userHourlyTotal.toFixed(2)} 积分`,
+      });
+    }
+
+    // 3. 更新用户每天消费
+    let userDaily = dailyUserCosts.get(userId) || [];
+    userDaily = userDaily.filter(r => r.timestamp > dayAgo);
+    userDaily.push({ userId, amount, timestamp: now });
+    dailyUserCosts.set(userId, userDaily);
+
+    const userDailyTotal = userDaily.reduce((sum, r) => sum + r.amount, 0);
+
+    // 4. 检查用户每天限额
+    if (userDailyTotal > COST_THRESHOLDS.userDailyLimit) {
+      this.sendAlert({
+        level: "critical",
+        title: "用户每天消费超限",
+        message: `用户 ${userId} 今天消费 ${userDailyTotal.toFixed(2)} 积分，已超过每日限额`,
+      });
+
+      return {
+        blocked: true,
+        reason: "今日消费已达上限，请明天再试或联系客服"
+      };
+    }
+
+    // 5. 更新平台每小时消费
+    const platformHourlyTotal = hourlyPlatformCosts
+      .filter(r => r.timestamp > hourAgo)
+      .reduce((sum, r) => sum + r.amount, 0) + amount;
+
+    if (platformHourlyTotal > COST_THRESHOLDS.platformHourlyLimit) {
+      this.sendAlert({
+        level: "critical",
+        title: "平台每小时消费超限",
+        message: `平台过去1小时消费 ${platformHourlyTotal.toFixed(2)} 积分`,
+      });
+    }
+
+    return { blocked: false };
+  }
+
+  /**
+   * 发送预警
+   */
+  private async sendAlert(alert: {
+    level: string;
+    title: string;
+    message: string;
+  }) {
+    logger.warn(`[CostAlert] ${alert.level}: ${alert.title}`, alert.message);
+
+    if (this.alertWebhook) {
+      try {
+        await fetch(this.alertWebhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...alert,
+            timestamp: new Date().toISOString(),
+          }),
+        });
+      } catch (error) {
+        logger.error("[CostAlert] Failed to send webhook:", error);
+      }
+    }
+  }
+
+  /**
+   * 获取用户消费统计
+   */
+  getUserStats(userId: string): {
+    hourly: number;
+    daily: number;
+    remainingHourly: number;
+    remainingDaily: number;
+  } {
+    const now = Date.now();
+    const hourAgo = now - 3600000;
+    const dayAgo = now - 86400000;
+
+    const userHourly = (hourlyUserCosts.get(userId) || [])
+      .filter(r => r.timestamp > hourAgo)
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    const userDaily = (dailyUserCosts.get(userId) || [])
+      .filter(r => r.timestamp > dayAgo)
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    return {
+      hourly: userHourly,
+      daily: userDaily,
+      remainingHourly: Math.max(0, COST_THRESHOLDS.userHourlyLimit - userHourly),
+      remainingDaily: Math.max(0, COST_THRESHOLDS.userDailyLimit - userDaily),
+    };
+  }
+
+  /**
+   * 清理过期记录
+   */
+  cleanup() {
+    const now = Date.now();
+    const dayAgo = now - 86400000;
+
+    // 清理用户记录
+    for (const [userId, records] of hourlyUserCosts) {
+      const filtered = records.filter(r => r.timestamp > dayAgo);
+      if (filtered.length === 0) {
+        hourlyUserCosts.delete(userId);
+      } else {
+        hourlyUserCosts.set(userId, filtered);
+      }
+    }
+
+    // 清理每日记录
+    for (const [userId, records] of dailyUserCosts) {
+      const weekAgo = now - 604800000;
+      const filtered = records.filter(r => r.timestamp > weekAgo);
+      if (filtered.length === 0) {
+        dailyUserCosts.delete(userId);
+      } else {
+        dailyUserCosts.set(userId, filtered);
+      }
+    }
+  }
+}
+
+export const costAlertService = new CostAlertService();
+
+// 定期清理（每1小时）
+setInterval(() => costAlertService.cleanup(), 3600000);
+```
+
+#### 6.2 修改 deductCredits 集成成本预警
+
+**修改文件：** `/src/lib/credits.ts`
+
+```typescript
+// 在文件顶部添加导入
+import { costAlertService } from "@/lib/security/cost-alert";
+
+// 修改 deductCredits 函数
+
+export async function deductCredits(
+  userId: string,
+  modelKey: string,
+  description: string,
+  relatedId?: string
+): Promise<DeductResult> {
+  try {
+    const client = getClient()
+
+    // 查询模型定价
+    const { data: pricingData, error: pricingError } = await client
+      .from("model_pricing")
+      .select("cost_per_call")
+      .eq("model_key", modelKey)
+      .eq("is_active", true)
+      .maybeSingle()
+
+    if (pricingError) throw new Error(`查询定价失败: ${pricingError.message}`)
+    if (!pricingData) {
+      return {
+        success: false,
+        balance: 0,
+        cost: 0,
+        error: `未找到模型 ${modelKey} 的定价配置`,
+      }
+    }
+
+    const cost = pricingData.cost_per_call
+
+    // ===== 新增：成本预警检查 =====
+    const costCheck = costAlertService.record(userId, Number(cost));
+    if (costCheck.blocked) {
+      return {
+        success: false,
+        balance: 0,
+        cost: Number(cost),
+        error: costCheck.reason,
+      };
+    }
+    // ===== 成本预警检查结束 =====
+
+    // 查询当前余额（原有逻辑）
+    const { data: creditData, error: creditError } = await client
+      .from("user_credits")
+      .select("balance, total_consumed, total_recharged")
+      .eq("user_id", userId)
+      .maybeSingle()
+
+    if (creditError) throw new Error(`查询余额失败: ${creditError.message}`)
+
+    const currentBalance = creditData?.balance ?? 0
+    const currentConsumed = creditData?.total_consumed ?? 0
+
+    if (currentBalance < cost) {
+      return {
+        success: false,
+        balance: currentBalance,
+        cost: cost,
+        error: `积分不足，当前余额 ${currentBalance.toFixed(2)}，需要 ${cost.toFixed(2)} 积分`,
+      }
+    }
+
+    // 扣除积分
+    const newBalance = currentBalance - cost
+    const newConsumed = currentConsumed + cost
+
+    const { error: updateError } = await client
+      .from("user_credits")
+      .upsert(
+        {
+          user_id: userId,
+          balance: newBalance,
+          total_consumed: newConsumed,
+          total_recharged: creditData?.total_recharged ?? 0,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      )
+
+    if (updateError) throw new Error(`扣费失败: ${updateError.message}`)
+
+    // 记录消费交易
+    const { error: txError } = await client.from("credit_transactions").insert({
+      user_id: userId,
+      type: "consume",
+      amount: -cost,
+      balance_after: newBalance,
+      description: description,
+      model: modelKey,
+      related_id: relatedId,
+      created_at: new Date().toISOString(),
+    })
+
+    if (txError) throw new Error(`记录交易失败: ${txError.message}`)
+
+    return {
+      success: true,
+      balance: newBalance,
+      cost: cost,
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return {
+      success: false,
+      balance: 0,
+      cost: 0,
+      error: msg,
+    }
+  }
+}
+```
+
+---
+
+## ⛔ 禁止事项
+
+- ❌ 禁止直接同步执行长任务（超过30秒）
+- ❌ 禁止无限token输入
+- ❌ 禁止无限流式连接
+- ❌ 禁止单用户无限制请求
+- ❌ 禁止单IP无限制请求
+- ❌ 禁止重复请求导致重复扣费
+- ❌ 禁止删除现有扣费逻辑
+- ❌ 禁止删除现有认证逻辑
+
+---
+
+## ✅ 必须事项
+
+- ✅ 用户级限流
+- ✅ IP级限流
+- ✅ Token输入限制
+- ✅ 请求超时控制
+- ✅ 幂等性控制
+- ✅ 熔断器保护
+- ✅ 成本预警
+- ✅ 错误日志记录
+- ✅ 限流响应头
+- ✅ 降级处理
+
+---
+
+## 📋 限流配置表
+
+| 接口类型 | 每分钟限制 | Token限制 | 超时时间 | 说明 |
+|---------|----------|----------|---------|------|
+| generate-image | 10次 | 8K | 3分钟 | 异步任务 |
+| generate-video | 5次 | 4K | 5分钟 | 异步任务 |
+| generate-3d | 3次 | 4K | 5分钟 | 异步任务 |
+| chat | 30次 | 128K | 1分钟 | 流式响应 |
+| generate-script | 10次 | 64K | 5分钟 | 长文本 |
+| extract-stream | 15次 | 8K | 2分钟 | 流式提取 |
+
+---
+
+## 📊 修复验证清单
+
+| 验证项 | 测试方法 | 预期结果 |
+|-------|---------|---------|
+| 用户限流 | 单用户快速请求 | 429响应 |
+| IP限流 | 换IP快速请求 | 429响应 |
+| Token截断 | 发送超长文本 | 自动截断 |
+| 超时控制 | 模拟慢响应 | 超时错误 |
+| 幂等性 | 重复提交相同key | 409响应 |
+| 熔断器 | 连续失败请求 | 降级响应 |
+| 成本预警 | 超过阈值消费 | 告警记录 |
+
+---
+
+## 🔄 回滚方案
+
+如果出现问题，按以下步骤回滚：
+
+1. **禁用限流中间件**：
+   ```typescript
+   // 注释掉 checkRateLimit 调用
+   const rateCheck = { allowed: true, headers: {} };
+   ```
+
+2. **禁用Token限制**：
+   ```typescript
+   // 注释掉 validateTokenLimit 调用
+   const tokenValidation = { valid: true };
+   ```
+
+3. **禁用幂等性**：
+   ```typescript
+   // 注释掉 idempotentService 调用
+   ```
+
+4. **禁用成本预警**：
+   ```typescript
+   // 注释掉 costAlertService.record 调用
+   ```
+
+---
+
+## 🎯 修复优先级
+
+| 阶段 | 内容 | 优先级 | 风险 |
+|-----|------|-------|------|
+| **第一阶段** | 用户/IP级限流 | 🔴 紧急 | 低 |
+| **第二阶段** | Token输入限制 | 🔴 紧急 | 低 |
+| **第三阶段** | 超时和熔断 | 🟠 高 | 中 |
+| **第四阶段** | 幂等性控制 | 🟡 中 | 低 |
+| **第五阶段** | 成本预警 | 🟡 中 | 低 |
+
+**建议立即执行第一和第二阶段，保护核心资源不被滥用。**
+

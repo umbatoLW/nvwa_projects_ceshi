@@ -1,0 +1,262 @@
+
+## 问题分析
+
+### 1. 分镜生成功能的数据流
+
+**后端API (`/api/ai/split-scenes`)**：
+- 返回 SSE (Server-Sent Events) 流式响应
+- 流式 chunk: `{ content: "..." }`
+- 最终 complete 事件: `{ type: "complete", data: { scenes: [...] }, message: "..." }`
+
+**useAIStream Hook**：
+- 接收流式响应
+- 最终返回 `finalResult = data.data` → `{ scenes: [...] }`
+
+**前端剧本详情页面**：
+- `handleSplitScenes` 函数调用 `splitStream.run()`
+- 期望接收 `{ scenes: [...] }` 格式
+- 然后转换为 `ScriptStoryboard[]` 格式
+
+### 2. 问题根源
+
+经过分析，代码结构是正确的，但可能存在以下问题：
+
+**问题1：useAIStream 返回的数据结构可能被错误处理**
+在 `useAIStream.ts` 第 147 行：
+```typescript
+finalResult = data.data ?? (accumulatedText ? { content: accumulatedText } : data);
+```
+
+**问题2：API 的 scenes 数据可能为空**
+如果 LLM 解析失败，`scenes` 可能是空数组
+
+**问题3：前端数据转换逻辑可能有遗漏**
+
+---
+
+## AI修复指令
+
+### 任务概述
+修复剧本详情页面中生成分镜按钮的功能问题，确保分镜生成、显示、保存流程正常工作。
+
+### 修复步骤
+
+#### 第一步：验证并优化 useAIStream Hook
+确保 useAIStream 正确处理 split-scenes API 的返回数据
+
+**修改文件**: `src/hooks/useAIStream.ts`
+**修改位置**: 第 140-148 行附近的 complete 事件处理
+
+**修复代码**:
+```typescript
+} else if (data.type === "complete") {
+  // 对于 split-scenes API，data.data 应该是 { scenes: [...] }
+  // 需要确保正确返回完整结构
+  finalResult = data.data ?? (accumulatedText ? { content: accumulatedText } : data);
+  batchUpdate({
+    isRunning: false,
+    progress: 100,
+    stage: "complete",
+    message: data.message ?? "完成",
+  });
+}
+```
+
+#### 第二步：增强 split-scenes API 的健壮性
+确保即使 LLM 返回非 JSON 格式，也能正确处理
+
+**修改文件**: `src/app/api/ai/split-scenes/route.ts`
+**修改位置**: 第 65-77 行的 JSON 解析部分
+
+**修复代码**:
+```typescript
+// 尝试解析完整的 JSON
+let scenes: unknown[] = [];
+try {
+  // 清理可能的 markdown 代码块
+  const cleanContent = fullContent
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
+  
+  // 尝试多种解析方式
+  try {
+    scenes = JSON.parse(cleanContent);
+  } catch {
+    // 尝试提取第一个数组
+    const arrayMatch = cleanContent.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      scenes = JSON.parse(arrayMatch[0]);
+    }
+  }
+  
+  // 确保 scenes 是数组
+  if (!Array.isArray(scenes)) {
+    scenes = [];
+  }
+} catch (parseError) {
+  console.error("JSON parse error:", parseError);
+  scenes = [];
+}
+```
+
+#### 第三步：优化前端 handleSplitScenes 函数
+确保正确处理返回的数据，并提供更好的错误反馈
+
+**修改文件**: `src/app/scripts/[id]/page.tsx`
+**修改位置**: `handleSplitScenes` 函数（约 1101-1178 行）
+
+**修复代码**:
+```typescript
+const handleSplitScenes = async () => {
+  if (!script?.content?.trim()) { 
+    toast.error("剧本内容为空，请先在剧本编辑区输入内容");
+    setActiveView("storyboard");
+    return; 
+  }
+  // 内容较短时直接生成
+  if (script.content.length < 5000) {
+    setIsSplitting(true);
+    setActiveView("storyboard");
+    setShowEpisodeSelector(false);
+    try {
+      const result = await splitStream.run("/api/ai/split-scenes", {
+        scriptContent: script.content,
+      });
+      
+      // 调试日志
+      console.log("split-scenes 返回结果:", result);
+      
+      const data = result as Record<string, unknown>;
+      let scenes: ScriptStoryboard[] = [];
+      
+      // 尝试从 data.scenes 获取
+      if (Array.isArray(data.scenes)) {
+        scenes = (data.scenes as Record<string, string>[]).map((s, i) => ({
+          num: i + 1,
+          duration: s.duration || s.time || "5s",
+          description: s.description || s.scene || s.content || "",
+          character: s.character || s.characters || "",
+          shot: s.shot || s.type || "中景",
+          camera: s.camera || s.movement || "固定",
+          audio: s.audio || s.sound || "",
+        }));
+      }
+      
+      // 如果 scenes 为空，尝试从 data.content 获取
+      if (scenes.length === 0 && data.content) {
+        let raw = data.content;
+        if (typeof raw === 'string') {
+          try { 
+            raw = JSON.parse(raw); 
+          } catch (err) {
+            console.error("JSON解析失败:", err);
+            // 尝试提取数组
+            const arrayMatch = raw.match(/\[[\s\S]*\]/);
+            if (arrayMatch) {
+              try {
+                raw = JSON.parse(arrayMatch[0]);
+              } catch {
+                // 失败则使用原始字符串
+              }
+            }
+          }
+        }
+        if (Array.isArray(raw)) {
+          scenes = (raw as Record<string, string>[]).map((s, i) => ({
+            num: i + 1,
+            duration: s.duration || s.time || "5s",
+            description: s.description || s.scene || s.content || "",
+            character: s.character || s.characters || "",
+            shot: s.shot || s.type || "中景",
+            camera: s.camera || s.movement || "固定",
+            audio: s.audio || s.sound || "",
+          }));
+        }
+      }
+      
+      console.log("最终解析的分镜数据:", scenes);
+      
+      setScript((prev) => (prev ? { ...prev, storyboards: scenes } : null));
+      try {
+        await apiFetch(`/api/scripts/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storyboards: scenes }),
+        });
+      } catch {
+        toast.error("分镜数据保存到数据库失败");
+      }
+      if (scenes.length > 0) {
+        toast.success(`成功拆分出 ${scenes.length} 个分镜`);
+      } else {
+        toast.error("分镜拆分结果为空，请尝试重新生成");
+      }
+    } catch (err) {
+      console.error("分镜拆分错误:", err);
+      toast.error("分镜拆分失败");
+    } finally {
+      setIsSplitting(false);
+    }
+  } else {
+    // 内容较长，先分析集数
+    handleAnalyzeEpisodes();
+  }
+};
+```
+
+---
+
+### 禁止事项（重要）
+
+1. **严禁修改项目架构**
+   - 不要改变现有的文件结构
+   - 不要替换或重写整个文件，只修改必要的部分
+   - 保持原有的技术栈（Next.js 16, TypeScript, shadcn/ui 等）
+
+2. **严禁删除或重构核心功能**
+   - 不要删除 `useAIStream` hook 的核心逻辑
+   - 不要删除 `split-scenes` API
+   - 不要删除剧本详情页面的 `handleSplitScenes` 函数
+
+3. **严禁引入重大依赖变更**
+   - 不要添加新的 npm 包依赖
+   - 不要升级或降级现有的依赖包版本
+
+4. **严禁修改数据流架构**
+   - 保持现有的 SSE 流式响应机制
+   - 保持现有的 Zustand 状态管理
+   - 不要改变 API 的请求/响应格式
+
+5. **严禁修改设计风格**
+   - 保持深色主题风格
+   - 保持现有的 UI 组件库
+   - 不要修改全局样式
+
+6. **严禁添加或修改业务逻辑**
+   - 只修复 bug，不要添加新功能
+   - 不要改变分镜生成的业务流程
+   - 不要修改数据模型结构
+
+7. **必须保持向后兼容**
+   - 修复后的代码必须与现有代码兼容
+   - 不要破坏现有功能
+   - 保持现有 API 接口不变
+
+8. **必须添加调试日志**
+   - 在关键位置添加 console.log 用于调试
+   - 不要删除或注释掉调试日志（除非专门要求）
+
+---
+
+### 验证标准
+
+修复完成后，需要验证以下功能：
+
+1. ✅ 点击"生成分镜"按钮后，分镜生成功能正常执行
+2. ✅ 分镜数据正确显示在分镜视图中
+3. ✅ 分镜数据正确保存到数据库
+4. ✅ 错误情况下显示友好的提示信息
+5. ✅ 控制台有清晰的调试日志
+6. ✅ 没有 TypeScript 类型错误
+7. ✅ 没有 ESLint 错误

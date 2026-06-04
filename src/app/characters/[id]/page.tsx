@@ -24,7 +24,13 @@ import {
   Sparkles,
   Edit3,
   Download,
+  Smile,
+  Zap,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+// P2: SkyReels 表情动作知识库集成
+import { EXPRESSION_LIBRARY, getExpression, recommendExpression } from "@/lib/skyreels-knowledge";
 
 interface Character {
   id: string;
@@ -51,6 +57,7 @@ function mapCharacter(api: Character | null) {
     age: "",     // 数据库无此字段，不显示
     occupation: api.tags[0] || "",  // 只显示有值的
     description: api.description,
+    personality: api.personality || api.tags[0] || 'neutral',
     traits: api.tags.map((tag: string, i: number) => ({
       label: tag,
       color: ["bg-primary/20 text-primary", "bg-[#22C55E]/20 text-[#22C55E]", "bg-[#F59E0B]/20 text-[#F59E0B]", "bg-[#33CCCC]/20 text-[#33CCCC]", "bg-muted text-muted-foreground"][i % 5],
@@ -193,6 +200,17 @@ export default function CharacterDetailPage() {
   const [anchorText, setAnchorText] = useState("");
   const [forbiddenText, setForbiddenText] = useState("");
 
+  // P2: 表情动作库展开状态
+  const [showExpressionLibrary, setShowExpressionLibrary] = useState(false);
+  const [selectedExpressionKey, setSelectedExpressionKey] = useState<string | null>(null);
+
+  // P-Show-1: 表演指令面板
+  const [showPerformancePanel, setShowPerformancePanel] = useState(false);
+  const [performanceCommand, setPerformanceCommand] = useState("");
+  const [selectedPerfExpression, setSelectedPerfExpression] = useState<string>("");
+  const [selectedPerfAction, setSelectedPerfAction] = useState<string>("");
+  const [selectedPerfScene, setSelectedPerfScene] = useState<string>("");
+
   useEffect(() => {
     if (!id) return;
     apiFetch(`/api/characters/${id}`)
@@ -217,14 +235,29 @@ export default function CharacterDetailPage() {
 
   const handleSaveEdit = async () => {
     if (!character) return;
+    // 输入验证
+    const trimmedName = editedName.trim();
+    if (!trimmedName) {
+      toast.error("角色名称不能为空");
+      return;
+    }
+    if (trimmedName.length > 50) {
+      toast.error("角色名称不能超过50个字符");
+      return;
+    }
+    const trimmedDescription = editedDescription.trim();
+    if (trimmedDescription.length > 2000) {
+      toast.error("角色描述不能超过2000个字符");
+      return;
+    }
     try {
       const res = await apiFetch(`/api/characters/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: editedName,
-          description: editedDescription,
-          personality: editedPersonality || character.description,
+          name: trimmedName,
+          description: trimmedDescription,
+          personality: editedPersonality.trim() || character.description,
           tags: editedTags.split(",").map((t) => t.trim()).filter(Boolean),
         }),
       });
@@ -668,6 +701,191 @@ export default function CharacterDetailPage() {
               );
             })}
           </div>
+        </div>
+
+        {/* P2: SkyReels 表情动作库 */}
+        <div className="rounded-xl bg-[#141414] border border-[#333] p-6 mb-6">
+          <button
+            onClick={() => setShowExpressionLibrary(!showExpressionLibrary)}
+            className="w-full flex items-center justify-between mb-2"
+          >
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Smile className="w-5 h-5 text-[#0ABAB5]" />
+              SkyReels 表情动作库
+              <Badge variant="secondary" className="text-xs bg-[#0ABAB5]/20 text-[#0ABAB5]">33种表情</Badge>
+            </h2>
+            {showExpressionLibrary ? (
+              <ChevronDown className="w-5 h-5 text-[#888]" />
+            ) : (
+              <ChevronRight className="w-5 h-5 text-[#888]" />
+            )}
+          </button>
+          <p className="text-xs text-[#888] mb-4">
+            基于 SkyReels 开源项目的标准表情分类，为 AI 表演生成提供标准化指令
+          </p>
+
+          {showExpressionLibrary && (
+            <div className="space-y-4">
+              {/* 表情分类标签 */}
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {Object.entries(EXPRESSION_LIBRARY).map(([key, expr]) => (
+                  <button
+                    key={key}
+                    onClick={() => setSelectedExpressionKey(selectedExpressionKey === key ? null : key)}
+                    className={`px-3 py-2 rounded-lg text-sm text-left transition-colors ${
+                      selectedExpressionKey === key
+                        ? 'bg-[#0ABAB5]/20 border border-[#0ABAB5]/50 text-[#0ABAB5]'
+                        : 'bg-[#1A1A1A] border border-[#333] text-[#ccc] hover:border-[#555]'
+                    }`}
+                  >
+                    <div className="font-medium">{expr.name}</div>
+                    <div className="text-xs text-[#888] mt-0.5">
+                      强度: {Array.isArray(expr.intensity) ? expr.intensity.join(',') : expr.intensity}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* 选中表情详情 */}
+              {selectedExpressionKey && (
+                <div className="mt-4 p-4 bg-[#0A0A0A] rounded-lg border border-[#333]">
+                  {(() => {
+                    const expr = getExpression(selectedExpressionKey);
+                    if (!expr) return null;
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-[#0ABAB5]" />
+                          <h3 className="text-white font-medium">{expr.name}</h3>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-[#888]">触发场景：</span>
+                            <span className="text-[#ccc]">{expr.triggers.join('、')}</span>
+                          </div>
+                          <div>
+                            <span className="text-[#888]">对白风格：</span>
+                            <span className="text-[#ccc]">{expr.dialogueStyle}</span>
+                          </div>
+                          {'compoundOf' in expr && expr.compoundOf && (
+                            <div>
+                              <span className="text-[#888]">复合表情：</span>
+                              <span className="text-[#ccc]">{(expr as unknown as Record<string, string[]>).compoundOf.join(' + ')}</span>
+                            </div>
+                          )}
+                        </div>
+                        {/* 推荐用于当前角色 */}
+                        {character && (
+                          <div className="pt-2 border-t border-[#333]">
+                            <p className="text-xs text-[#888] mb-2">基于角色性格推荐的使用场景：</p>
+                            <div className="flex flex-wrap gap-2">
+                              {recommendExpression(character.personality || 'neutral').map((rec, i) => (
+                                <Badge key={i} variant="secondary" className="text-xs bg-[#0ABAB5]/10 text-[#0ABAB5]">
+                                  {rec}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* P-Show-1: 表演指令面板 */}
+        <div className="space-y-2">
+          <button
+            onClick={() => setShowPerformancePanel(!showPerformancePanel)}
+            className="flex items-center justify-between w-full text-left"
+            aria-expanded={showPerformancePanel}
+            aria-label="切换表演指令面板"
+          >
+            <span className="text-sm font-medium text-white">表演指令</span>
+            <span className="text-xs text-[#888] mr-2">
+              {showPerformancePanel ? "收起" : "展开"}
+            </span>
+            <ChevronDown className={`w-4 h-4 text-[#888] transition-transform ${showPerformancePanel ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
+          {showPerformancePanel && (
+            <div className="bg-[#0A0A0A] rounded-lg border border-[#333] p-4 space-y-3">
+              <div className="text-xs text-[#888] mb-2">选择一个表情和动作，生成角色表演指令</div>
+              {/* 表情选择 */}
+              <div className="grid grid-cols-4 gap-1">
+                {["neutral", "happy", "sad", "angry", "surprised", "fearful", "disgusted", "contempt"].map((expr) => {
+                  const info = getExpression(expr);
+                  return (
+                    <button
+                      key={expr}
+                      onClick={() => setSelectedPerfExpression(expr)}
+                      className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                        selectedPerfExpression === expr
+                          ? "bg-[#0ABAB5]/20 border-[#0ABAB5] text-[#0ABAB5]"
+                          : "bg-[#141414] border-[#333] text-[#888] hover:border-[#555]"
+                      }`}
+                    >
+                      {info?.name || expr}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* 动作选择 */}
+              <div className="grid grid-cols-3 gap-1">
+                {["standing", "walking", "running", "sitting", "gesturing", "turning"].map((action) => (
+                  <button
+                    key={action}
+                    onClick={() => setSelectedPerfAction(action)}
+                    className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                      selectedPerfAction === action
+                        ? "bg-[#0ABAB5]/20 border-[#0ABAB5] text-[#0ABAB5]"
+                        : "bg-[#141414] border-[#333] text-[#888] hover:border-[#555]"
+                    }`}
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
+              {/* 场景选择 */}
+              <div className="grid grid-cols-2 gap-1">
+                {["室内对话", "室外行走", "战斗场景", "情感爆发"].map((scene) => (
+                  <button
+                    key={scene}
+                    onClick={() => setSelectedPerfScene(scene)}
+                    className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+                      selectedPerfScene === scene
+                        ? "bg-[#0ABAB5]/20 border-[#0ABAB5] text-[#0ABAB5]"
+                        : "bg-[#141414] border-[#333] text-[#888] hover:border-[#555]"
+                    }`}
+                  >
+                    {scene}
+                  </button>
+                ))}
+              </div>
+              {/* 生成按钮 */}
+              <Button
+                size="sm"
+                className="w-full bg-[#0ABAB5] hover:bg-[#0ABAB5]/80 text-black"
+                disabled={!selectedPerfExpression}
+                onClick={() => {
+                  const expr = getExpression(selectedPerfExpression);
+                  const cmd = `${character.name}，${expr?.name || selectedPerfExpression}表情，${selectedPerfAction || "站立"}动作，${selectedPerfScene || "室内对话"}场景`;
+                  setPerformanceCommand(cmd);
+                }}
+              >
+                <Wand2 className="w-3 h-3 mr-1" />
+                生成表演指令
+              </Button>
+              {/* 提示词预览 */}
+              {performanceCommand && (
+                <div className="bg-[#141414] rounded p-2 text-xs text-[#0ABAB5] font-mono border border-[#0ABAB5]/30">
+                  {performanceCommand}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
       {/* Edit Modal */}

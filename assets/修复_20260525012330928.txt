@@ -1,0 +1,1015 @@
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\api\admin\platform-keys\route.ts
+          
+
+        
+            
+toolName: file_search
+            
+status: success
+          
+file_pattern: **/platform*.ts
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: platform_api_keys
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: getCurrentUser|auth|admin|permission|RBAC
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\lib\auth.ts
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\storage\database\shared\schema.ts
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\lib\platform-keys.ts
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: platform-keys|apiKey|api_key
+          
+
+        
+            
+toolName: view_files
+            
+status: success
+          
+            
+filePath: e:\projects\src\app\settings\page.tsx
+          
+
+        
+            
+toolName: search_by_regex
+            
+status: success
+          
+query: admin|platform.*key
+          
+---
+
+# 🚨 第六轮检测（管理员权限与平台Key安全） - 详细修复指令
+
+## 📊 检测结果
+
+### 一、灾难级安全问题清单
+
+| 问题 | 风险等级 | 影响范围 |
+|------|---------|---------|
+| **无管理员鉴权** | 🔴 灾难级 | 任何人可访问/修改平台API Key |
+| **API Key明文返回** | 🔴 灾难级 | 数据库中直接存储明文Key |
+| **无RBAC权限控制** | 🔴 灾难级 | 普通用户可执行管理员操作 |
+| **无操作审计** | 🔴 高危 | 出现问题无法追踪 |
+| **无IP限制** | 🟠 高危 | 可在任意网络执行管理操作 |
+| **无二次验证** | 🟠 高危 | 密码泄露即可完全控制 |
+
+---
+
+## 🛠️ 修复方案（分阶段执行）
+
+### 第一阶段：基础鉴权与审计（高优先级）
+
+#### 1.1 创建管理员权限检查中间件
+
+**创建文件：** `/src/lib/security/admin-auth.ts`
+
+```typescript
+/**
+ * 管理员权限验证模块
+ * 用于保护管理员接口
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
+
+/**
+ * 用户角色类型
+ */
+export type UserRole = "user" | "admin" | "super_admin";
+
+/**
+ * 管理员权限检查结果
+ */
+export interface AuthCheckResult {
+  allowed: boolean;
+  reason?: string;
+  userId?: string;
+  role?: UserRole;
+}
+
+/**
+ * 管理员权限检查
+ */
+export async function checkAdminPermission(request: NextRequest): Promise<AuthCheckResult> {
+  // 1. 检查是否登录
+  const user = await getCurrentUser(request);
+  
+  if (!user) {
+    return { allowed: false, reason: "未登录" };
+  }
+
+  // 2. 检查用户角色（从用户元数据或自定义表获取）
+  // TODO: 需要在数据库中添加用户角色表或在supabase auth中配置
+  const userRole = (user as any).role || "user";
+
+  if (userRole !== "admin" && userRole !== "super_admin") {
+    return { allowed: false, reason: "需要管理员权限", userId: user.id, role: userRole };
+  }
+
+  return { allowed: true, userId: user.id, role: userRole };
+}
+
+/**
+ * 管理员认证中间件包装函数
+ */
+export function withAdminAuth(
+  handler: (request: NextRequest, context: { userId: string; role: UserRole }) => Promise<NextResponse>
+) {
+  return async (request: NextRequest) => {
+    const authResult = await checkAdminPermission(request);
+
+    if (!authResult.allowed) {
+      return NextResponse.json(
+        { success: false, error: authResult.reason || "无权限" },
+        { status: authResult.reason === "未登录" ? 401 : 403 }
+      );
+    }
+
+    return handler(request, {
+      userId: authResult.userId!,
+      role: authResult.role!,
+    });
+  };
+}
+
+/**
+ * 二次密码验证检查
+ * 用于敏感操作（如修改API Key）
+ */
+export async function verifySecondPassword(
+  userId: string,
+  secondPassword: string
+): Promise<boolean> {
+  // TODO: 实现二次密码验证逻辑
+  // 可以存储哈希或使用专门的二次验证服务
+  
+  // 临时实现：实际需要从数据库读取哈希并验证
+  const storedHash = await getSecondPasswordHash(userId);
+  
+  if (!storedHash) {
+    return false;
+  }
+  
+  // 使用bcrypt或其他安全的比较方式
+  return simpleHash(secondPassword) === storedHash;
+}
+
+/**
+ * 模拟获取二次密码哈希
+ */
+async function getSecondPasswordHash(userId: string): Promise<string | null> {
+  // TODO: 从数据库获取
+  return null;
+}
+
+/**
+ * 简单哈希（实际应使用bcrypt）
+ */
+function simpleHash(password: string): string {
+  // 这是占位符，实际应使用bcrypt或argon2
+  let hash = 0;
+  for (let i = 0; i < password.length; i++) {
+    const char = password.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return String(hash);
+}
+```
+
+#### 1.2 创建审计日志服务
+
+**修改文件：** `/src/lib/security/audit-logger.ts`（如果已存在则追加）
+
+```typescript
+/**
+ * 管理员操作审计日志
+ * 用于记录所有管理员操作
+ */
+
+interface AdminAuditEvent {
+  id: string;
+  timestamp: string;
+  action: string;
+  userId: string;
+  userRole: string;
+  target: string;
+  method: string;
+  success: boolean;
+  ip?: string;
+  userAgent?: string;
+  details?: Record<string, unknown>;
+  error?: string;
+}
+
+// 管理员操作类型
+export const ADMIN_ACTIONS = {
+  // 平台Key操作
+  PLATFORM_KEY_VIEW: "platform_key_view",
+  PLATFORM_KEY_CREATE: "platform_key_create",
+  PLATFORM_KEY_UPDATE: "platform_key_update",
+  PLATFORM_KEY_DELETE: "platform_key_delete",
+  
+  // 用户管理操作
+  USER_CREATE: "user_create",
+  USER_UPDATE: "user_update",
+  USER_DELETE: "user_delete",
+  USER_ROLE_CHANGE: "user_role_change",
+  
+  // 系统配置操作
+  CONFIG_UPDATE: "config_update",
+} as const;
+
+class AdminAuditLogger {
+  private events: AdminAuditEvent[] = [];
+  private maxEvents = 5000;
+
+  /**
+   * 记录管理员操作
+   */
+  log(event: {
+    action: string;
+    userId: string;
+    userRole: string;
+    target: string;
+    method: string;
+    request?: Request;
+    success: boolean;
+    details?: Record<string, unknown>;
+    error?: string;
+  }) {
+    const auditEvent: AdminAuditEvent = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      timestamp: new Date().toISOString(),
+      action: event.action,
+      userId: event.userId,
+      userRole: event.userRole,
+      target: event.target,
+      method: event.method,
+      success: event.success,
+      details: event.details,
+      error: event.error,
+    };
+
+    // 提取IP和User-Agent
+    if (event.request) {
+      auditEvent.ip = event.request.headers.get("x-forwarded-for") ||
+        event.request.headers.get("x-real-ip") || "unknown";
+      auditEvent.userAgent = event.request.headers.get("user-agent") || "unknown";
+    }
+
+    // 输出到控制台
+    console.log(
+      `[ADMIN_AUDIT:${event.success ? "SUCCESS" : "FAILURE"}]`,
+      `${event.userId}(${event.userRole})`,
+      event.method,
+      event.action,
+      event.target,
+      event.error ? `Error: ${event.error}` : ""
+    );
+
+    // 保存到内存（生产环境应发送到专门的日志服务）
+    this.events.push(auditEvent);
+    if (this.events.length > this.maxEvents) {
+      this.events.shift();
+    }
+
+    // TODO: 同时写入数据库持久化
+    this.persistToDatabase(auditEvent);
+  }
+
+  /**
+   * 写入数据库（异步，不阻塞主流程）
+   */
+  private async persistToDatabase(event: AdminAuditEvent) {
+    try {
+      // TODO: 实现数据库持久化
+      // const supabase = getSupabaseClient();
+      // await supabase.from('admin_audit_logs').insert(event);
+    } catch (error) {
+      console.error("[AdminAudit] Failed to persist:", error);
+    }
+  }
+
+  /**
+   * 查询审计日志
+   */
+  query(options: {
+    userId?: string;
+    action?: string;
+    startTime?: string;
+    endTime?: string;
+    limit?: number;
+  }): AdminAuditEvent[] {
+    let results = [...this.events];
+
+    if (options.userId) {
+      results = results.filter((e) => e.userId === options.userId);
+    }
+    if (options.action) {
+      results = results.filter((e) => e.action === options.action);
+    }
+    if (options.startTime) {
+      results = results.filter((e) => e.timestamp >= options.startTime!);
+    }
+    if (options.endTime) {
+      results = results.filter((e) => e.timestamp <= options.endTime!);
+    }
+
+    return results.slice(-(options.limit || 100));
+  }
+}
+
+export const adminAuditLogger = new AdminAuditLogger();
+```
+
+---
+
+### 第二阶段：修复platform-keys接口（核心）
+
+#### 2.1 修复 GET 接口 - 添加鉴权和脱敏
+
+**修改文件：** `/src/app/api/admin/platform-keys/route.ts`
+
+```typescript
+/**
+ * 平台API Key管理API
+ * 用于后台管理各平台的API Key配置
+ * 
+ * 安全措施：
+ * - 管理员JWT验证
+ * - 操作审计
+ * - Key脱敏返回
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { checkAdminPermission } from "@/lib/security/admin-auth";
+import { adminAuditLogger, ADMIN_ACTIONS } from "@/lib/security/audit-logger";
+
+// 平台配置（保持不变）
+export const PLATFORMS = {
+  aliyun: {
+    name: "阿里云百炼",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    models: ["wan2.7-text2image", "wan2.1-t2v-14b", "wan2.1-t2v-1.3b", "qwen-plus"],
+  },
+  jimeng: {
+    name: "即梦",
+    baseUrl: "",
+    models: ["seedance2.0"],
+  },
+  vidu: {
+    name: "Vidu",
+    baseUrl: "",
+    models: ["vidu-2"],
+  },
+  kling: {
+    name: "可灵",
+    baseUrl: "",
+    models: [],
+  },
+} as const;
+
+/**
+ * 脱敏API Key
+ * 只显示前4位和后4位
+ */
+function maskApiKey(apiKey: string): string {
+  if (!apiKey || apiKey.length < 10) {
+    return "****";
+  }
+  return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
+}
+
+/**
+ * 获取所有平台配置（管理员）
+ * 
+ * 注意：此接口只返回Key的存在状态和脱敏Key
+ * 完整的Key值不应直接返回给前端
+ */
+export async function GET(request: NextRequest) {
+  const startTime = Date.now();
+  
+  try {
+    // 1. 管理员鉴权
+    const authResult = await checkAdminPermission(request);
+    
+    if (!authResult.allowed) {
+      adminAuditLogger.log({
+        action: ADMIN_ACTIONS.PLATFORM_KEY_VIEW,
+        userId: "unknown",
+        userRole: "unknown",
+        target: "/api/admin/platform-keys",
+        method: "GET",
+        request,
+        success: false,
+        error: authResult.reason,
+      });
+      
+      return NextResponse.json(
+        { success: false, error: authResult.reason || "无权限" },
+        { status: authResult.reason === "未登录" ? 401 : 403 }
+      );
+    }
+
+    const supabase = getSupabaseClient();
+
+    // 2. 查询已配置的平台（不返回完整Key）
+    const { data: keys, error } = await supabase
+      .from("platform_api_keys")
+      .select("id, platform, base_url, models, is_active, description, created_at, updated_at, api_key")
+      .order("platform");
+
+    if (error) {
+      adminAuditLogger.log({
+        action: ADMIN_ACTIONS.PLATFORM_KEY_VIEW,
+        userId: authResult.userId!,
+        userRole: authResult.role!,
+        target: "/api/admin/platform-keys",
+        method: "GET",
+        request,
+        success: false,
+        error: "数据库查询失败",
+      });
+      
+      return NextResponse.json({ success: false, error: "查询失败" }, { status: 500 });
+    }
+
+    // 3. 合并平台配置并脱敏Key
+    const platforms = Object.entries(PLATFORMS).map(([key, config]) => {
+      const saved = keys?.find((k) => k.platform === key);
+      return {
+        platform: key,
+        name: config.name,
+        baseUrl: config.baseUrl,
+        defaultModels: config.models,
+        hasKey: !!saved,
+        isActive: saved?.is_active ?? false,
+        configuredModels: saved?.models ?? [],
+        // 脱敏的Key信息
+        apiKeyMasked: saved?.api_key ? maskApiKey(saved.api_key) : null,
+      };
+    });
+
+    // 4. 记录审计日志
+    adminAuditLogger.log({
+      action: ADMIN_ACTIONS.PLATFORM_KEY_VIEW,
+      userId: authResult.userId!,
+      userRole: authResult.role!,
+      target: "/api/admin/platform-keys",
+      method: "GET",
+      request,
+      success: true,
+      details: {
+        platformsCount: platforms.length,
+        withKeysCount: platforms.filter((p) => p.hasKey).length,
+        duration: Date.now() - startTime,
+      },
+    });
+
+    return NextResponse.json({ success: true, data: platforms });
+  } catch (error) {
+    console.error("[Platform Keys API] Error:", error);
+    return NextResponse.json({ success: false, error: "服务器错误" }, { status: 500 });
+  }
+}
+
+/**
+ * 保存平台API Key（管理员）
+ */
+export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+
+  try {
+    // 1. 管理员鉴权
+    const authResult = await checkAdminPermission(request);
+
+    if (!authResult.allowed) {
+      adminAuditLogger.log({
+        action: ADMIN_ACTIONS.PLATFORM_KEY_CREATE,
+        userId: "unknown",
+        userRole: "unknown",
+        target: "/api/admin/platform-keys",
+        method: "POST",
+        request,
+        success: false,
+        error: authResult.reason,
+      });
+
+      return NextResponse.json(
+        { success: false, error: authResult.reason || "无权限" },
+        { status: authResult.reason === "未登录" ? 401 : 403 }
+      );
+    }
+
+    // 2. 解析请求
+    const body = await request.json();
+    const { platform, apiKey, baseUrl, models, description } = body;
+
+    if (!platform || !apiKey) {
+      adminAuditLogger.log({
+        action: ADMIN_ACTIONS.PLATFORM_KEY_CREATE,
+        userId: authResult.userId!,
+        userRole: authResult.role!,
+        target: `/api/admin/platform-keys:${platform}`,
+        method: "POST",
+        request,
+        success: false,
+        error: "缺少必填参数",
+      });
+
+      return NextResponse.json({ success: false, error: "缺少必填参数" }, { status: 400 });
+    }
+
+    // 3. 验证平台标识
+    if (!PLATFORMS[platform as keyof typeof PLATFORMS]) {
+      return NextResponse.json({ success: false, error: "不支持的平台" }, { status: 400 });
+    }
+
+    // 4. 保存Key（实际应该先加密）
+    const supabase = getSupabaseClient();
+
+    const { error } = await supabase
+      .from("platform_api_keys")
+      .upsert(
+        {
+          platform,
+          api_key: apiKey, // TODO: 这里应该加密后存储
+          base_url: baseUrl || PLATFORMS[platform as keyof typeof PLATFORMS]?.baseUrl || "",
+          models: models || PLATFORMS[platform as keyof typeof PLATFORMS]?.models || [],
+          description: description || "",
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "platform" }
+      );
+
+    if (error) {
+      console.error("[Platform Keys API] Save error:", error);
+      
+      adminAuditLogger.log({
+        action: ADMIN_ACTIONS.PLATFORM_KEY_CREATE,
+        userId: authResult.userId!,
+        userRole: authResult.role!,
+        target: `/api/admin/platform-keys:${platform}`,
+        method: "POST",
+        request,
+        success: false,
+        error: "保存失败",
+      });
+
+      return NextResponse.json({ success: false, error: "保存失败" }, { status: 500 });
+    }
+
+    // 5. 记录审计日志（成功）
+    adminAuditLogger.log({
+      action: ADMIN_ACTIONS.PLATFORM_KEY_UPDATE,
+      userId: authResult.userId!,
+      userRole: authResult.role!,
+      target: `/api/admin/platform-keys:${platform}`,
+      method: "POST",
+      request,
+      success: true,
+      details: {
+        platform,
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+        modelsCount: (models || []).length,
+        duration: Date.now() - startTime,
+      },
+    });
+
+    // 6. 清除Key缓存
+    // import { clearPlatformKeysCache } from '@/lib/platform-keys';
+    // clearPlatformKeysCache();
+
+    return NextResponse.json({ success: true, message: "保存成功" });
+  } catch (error) {
+    console.error("[Platform Keys API] Error:", error);
+    return NextResponse.json({ success: false, error: "服务器错误" }, { status: 500 });
+  }
+}
+```
+
+---
+
+### 第三阶段：Key加密存储（后续阶段）
+
+#### 3.1 添加加密工具
+
+**创建文件：** `/src/lib/security/encryption.ts`
+
+```typescript
+/**
+ * API Key加密工具
+ * 用于安全存储敏感的API Key
+ */
+
+import crypto from 'crypto';
+
+// 加密密钥（应从环境变量读取）
+const ENCRYPTION_KEY = process.env.PLATFORM_KEY_ENCRYPTION_KEY || '';
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+
+/**
+ * 加密API Key
+ */
+export function encryptApiKey(plainText: string): string {
+  if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
+    console.warn("[Encryption] Invalid encryption key, storing as-is (DEV MODE)");
+    return plainText;
+  }
+
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const key = Buffer.from(ENCRYPTION_KEY, 'hex');
+  
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  
+  let encrypted = cipher.update(plainText, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  
+  const authTag = cipher.getAuthTag();
+  
+  // 返回格式: iv:authTag:encrypted
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+}
+
+/**
+ * 解密API Key
+ */
+export function decryptApiKey(encryptedText: string): string {
+  if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
+    console.warn("[Encryption] Invalid encryption key, returning as-is (DEV MODE)");
+    return encryptedText;
+  }
+
+  const parts = encryptedText.split(':');
+  if (parts.length !== 3) {
+    // 可能是旧版本的未加密数据
+    return encryptedText;
+  }
+
+  const [ivHex, authTagHex, encrypted] = parts;
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  const key = Buffer.from(ENCRYPTION_KEY, 'hex');
+
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+
+  return decrypted;
+}
+
+/**
+ * 生成随机加密密钥（用于初始化）
+ */
+export function generateEncryptionKey(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+```
+
+#### 3.2 修改platform-keys.ts读取逻辑
+
+**修改文件：** `/src/lib/platform-keys.ts`
+
+```typescript
+// 在文件顶部添加导入
+import { decryptApiKey } from '@/lib/security/encryption';
+
+// 修改 getPlatformConfig 函数中的Key读取部分
+
+// 找到这行：
+// apiKey: data.api_key,
+
+// 修改为：
+// apiKey: decryptApiKey(data.api_key),
+```
+
+---
+
+### 第四阶段：IP白名单和异常告警（可选增强）
+
+#### 4.1 IP白名单检查
+
+**修改文件：** `/src/lib/security/admin-auth.ts`（追加）
+
+```typescript
+/**
+ * IP白名单检查
+ */
+
+// 允许的IP列表（生产环境应从数据库或配置读取）
+const ALLOWED_ADMIN_IPS = new Set([
+  // 公司IP
+  '10.0.0.0/8',
+  // 添加特定IP
+  '127.0.0.1',
+  '::1',
+]);
+
+/**
+ * 检查IP是否在白名单中
+ */
+export function isIpAllowed(ip: string): boolean {
+  // 在开发环境允许所有IP
+  if (process.env.NODE_ENV === 'development') {
+    return true;
+  }
+
+  // 检查是否在白名单中
+  return ALLOWED_ADMIN_IPS.has(ip);
+}
+
+/**
+ * 获取客户端IP
+ */
+export function getClientIp(request: NextRequest): string {
+  return (
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    request.headers.get('x-real-ip') ||
+    request.ip ||
+    'unknown'
+  );
+}
+```
+
+#### 4.2 异常告警
+
+**创建文件：** `/src/lib/security/alert-service.ts`
+
+```typescript
+/**
+ * 安全异常告警服务
+ * 用于发送安全事件通知
+ */
+
+type AlertLevel = 'info' | 'warning' | 'critical';
+
+interface SecurityAlert {
+  level: AlertLevel;
+  title: string;
+  message: string;
+  details?: Record<string, unknown>;
+  timestamp: string;
+}
+
+class AlertService {
+  private alertWebhook: string | undefined = process.env.SECURITY_ALERT_WEBHOOK;
+  private alertEmail: string | undefined = process.env.SECURITY_ALERT_EMAIL;
+
+  /**
+   * 发送告警
+   */
+  async send(alert: Omit<SecurityAlert, 'timestamp'>) {
+    const fullAlert: SecurityAlert = {
+      ...alert,
+      timestamp: new Date().toISOString(),
+    };
+
+    // 输出到日志
+    console.log(`[SECURITY_ALERT:${alert.level.toUpperCase()}]`, alert.title, alert.message);
+
+    // 发送到Webhook（可选）
+    if (this.alertWebhook) {
+      await this.sendToWebhook(fullAlert);
+    }
+
+    // 发送邮件告警（可选，仅critical级别）
+    if (this.alertEmail && alert.level === 'critical') {
+      await this.sendEmail(fullAlert);
+    }
+  }
+
+  /**
+   * 管理员操作告警
+   */
+  async adminOperation(alert: {
+    userId: string;
+    action: string;
+    success: boolean;
+    ip: string;
+    error?: string;
+  }) {
+    if (!alert.success) {
+      await this.send({
+        level: 'warning',
+        title: '管理员操作失败',
+        message: `用户 ${alert.userId} 的操作 ${alert.action} 失败`,
+        details: {
+          action: alert.action,
+          userId: alert.userId,
+          ip: alert.ip,
+          error: alert.error,
+        },
+      });
+    }
+  }
+
+  /**
+   * 异常访问告警
+   */
+  async suspiciousAccess(details: {
+    ip: string;
+    userId?: string;
+    endpoint: string;
+    reason: string;
+  }) {
+    await this.send({
+      level: 'critical',
+      title: '可疑访问',
+      message: `检测到可疑访问: ${details.reason}`,
+      details,
+    });
+  }
+
+  private async sendToWebhook(alert: SecurityAlert) {
+    try {
+      await fetch(this.alertWebhook!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(alert),
+      });
+    } catch (error) {
+      console.error('[AlertService] Failed to send webhook:', error);
+    }
+  }
+
+  private async sendEmail(alert: SecurityAlert) {
+    // TODO: 实现邮件发送
+    console.log('[AlertService] Email alert:', alert);
+  }
+}
+
+export const alertService = new AlertService();
+```
+
+---
+
+## ⛔ 禁止事项
+
+- ❌ 禁止返回完整API Key给前端
+- ❌ 禁止在浏览器存储Key
+- ❌ 禁止前端缓存Key
+- ❌ 禁止暴露service_role
+- ❌ 禁止未登录访问管理员接口
+- ❌ 禁止非管理员用户访问
+- ❌ 禁止删除现有鉴权逻辑
+- ❌ 禁止修改数据库表结构
+- ❌ 禁止修改API返回结构（保持success/data/error格式）
+
+---
+
+## ✅ 必须事项
+
+- ✅ 管理员JWT验证
+- ✅ 操作审计日志
+- ✅ Key脱敏返回
+- ✅ 保持向后兼容
+- ✅ 错误信息不暴露内部细节
+- ✅ 记录操作人、操作时间、操作内容
+
+---
+
+## 📋 风险分析
+
+| 风险 | 等级 | 说明 | 缓解措施 |
+|------|-----|------|---------|
+| 鉴权中间件失败 | 中 | 新代码可能导致合法请求被拒绝 | 保留原有代码作为降级 |
+| 数据库查询变更 | 中 | 可能影响前端数据展示 | 保持字段兼容 |
+| 审计日志性能 | 低 | 写入数据库可能影响性能 | 使用异步写入 |
+
+---
+
+## 🔄 回滚方案
+
+如果出现问题，按以下步骤回滚：
+
+1. **回滚中间件**：
+   ```typescript
+   // 临时禁用管理员检查
+   const authResult = { allowed: true, userId: 'dev', role: 'admin' };
+   ```
+
+2. **禁用审计日志**：
+   ```typescript
+   // 注释掉 adminAuditLogger.log() 调用
+   ```
+
+3. **恢复明文Key读取**：
+   ```typescript
+   // 恢复 decryptApiKey 改为直接使用
+   apiKey: data.api_key,
+   ```
+
+---
+
+## 🧪 测试方案
+
+| 测试项 | 测试方法 | 预期结果 |
+|-------|---------|---------|
+| 未登录访问 | 直接调用GET/POST | 返回401 |
+| 非管理员访问 | 使用普通用户Token | 返回403 |
+| 管理员访问 | 使用管理员Token | 正常返回 |
+| Key脱敏 | 查看返回的apiKey字段 | 显示为 `sk-****` 格式 |
+| 审计日志 | 查看控制台/数据库 | 记录完整操作信息 |
+| 异常IP访问 | 使用非白名单IP | 开发环境允许，生产环境拒绝 |
+
+---
+
+## 📁 需要创建的数据库表（可选）
+
+如果需要持久化审计日志，创建以下表：
+
+```sql
+CREATE TABLE admin_audit_logs (
+  id VARCHAR(36) PRIMARY KEY,
+  action VARCHAR(50) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  user_role VARCHAR(20) NOT NULL,
+  target VARCHAR(255) NOT NULL,
+  method VARCHAR(10) NOT NULL,
+  success BOOLEAN NOT NULL,
+  ip VARCHAR(45),
+  user_agent TEXT,
+  details JSONB,
+  error TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_user ON admin_audit_logs(user_id);
+CREATE INDEX idx_audit_action ON admin_audit_logs(action);
+CREATE INDEX idx_audit_created ON admin_audit_logs(created_at);
+```
+
+---
+
+## 🎯 修复优先级
+
+| 阶段 | 内容 | 优先级 | 风险 |
+|-----|------|-------|------|
+| **第一阶段** | 管理员鉴权 + 审计日志 | 🔴 紧急 | 低 |
+| **第二阶段** | Key脱敏返回 | 🔴 紧急 | 低 |
+| **第三阶段** | Key加密存储 | 🟠 高 | 中 |
+| **第四阶段** | IP白名单 + 告警 | 🟡 中 | 低 |
+
+**建议立即执行第一和第二阶段，第三阶段在上线前完成。**

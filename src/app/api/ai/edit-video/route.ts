@@ -1,14 +1,38 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
+import { deductCredits, getUserBalance } from "@/lib/credits";
 
 const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || "";
 const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1";
+
+// 视频编辑消耗积分
+const EDIT_VIDEO_COST = 200;
+const MODEL_KEY = "video-edit";
 
 /**
  * 视频编辑API - 风格转换/口型同步/视频编辑
  */
 export async function POST(request: NextRequest) {
   try {
+    // 权限校验
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "未登录", code: "UNAUTHORIZED" },
+        { status: 401 }
+      );
+    }
+
+    // 积分校验
+    const balance = await getUserBalance(user.id);
+    if (balance < EDIT_VIDEO_COST) {
+      return NextResponse.json(
+        { success: false, error: "积分不足", code: "INSUFFICIENT_CREDITS" },
+        { status: 402 }
+      );
+    }
+
     const {
       mode,
       videoUrl,
@@ -88,7 +112,15 @@ export async function POST(request: NextRequest) {
 
     const result = await response.json();
 
+    // 扣除积分
+    try {
+      await deductCredits(user.id, MODEL_KEY, `视频编辑: ${mode}`);
+    } catch (e) {
+      console.error("积分扣除失败:", e instanceof Error ? e.message : String(e));
+    }
+
     return NextResponse.json({
+      success: true,
       output: result.output,
       usage: result.usage,
     });

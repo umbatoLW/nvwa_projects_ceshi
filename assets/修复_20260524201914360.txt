@@ -1,0 +1,771 @@
+## AI优化指令：剧本详情页组件拆分与性能优化
+
+---
+
+### 一、核心原则
+
+| 原则 | 说明 |
+|------|------|
+| **渐进式拆分** | 先拆1-2个组件测试，全部正常再拆剩下的 |
+| **功能不变** | 只移动代码，不改变逻辑 |
+| **向后兼容** | 不修改API接口、数据库结构、云端交互 |
+| **Props传递** | 子组件通过props接收数据，不使用Context |
+
+---
+
+### 二、文件结构
+
+```
+src/components/script-views/
+├── ScriptEditor.tsx      # 剧本编辑视图
+├── StoryboardView.tsx    # 分镜视图
+├── RolesView.tsx        # 角色视图
+├── CostumesView.tsx     # 服装视图
+├── ScenesView.tsx       # 场景视图
+├── PropsView.tsx        # 道具视图
+├── OptimizeView.tsx     # AI优化视图
+├── RedlineView.tsx     # 内容审查视图
+└── index.ts            # 统一导出
+```
+
+---
+
+### 三、实施步骤
+
+---
+
+### 第一步：创建目录和基础文件
+
+**新增文件**：`/src/components/script-views/index.ts`
+
+```typescript
+export { default as ScriptEditor } from './ScriptEditor';
+export { default as StoryboardView } from './StoryboardView';
+export { default as RolesView } from './RolesView';
+export { default as CostumesView } from './CostumesView';
+export { default as ScenesView } from './ScenesView';
+export { default as PropsView } from './PropsView';
+export { default as OptimizeView } from './OptimizeView';
+export { default as RedlineView } from './RedlineView';
+```
+
+---
+
+### 第二步：创建 ScriptEditor.tsx
+
+**新增文件**：`/src/components/script-views/ScriptEditor.tsx`
+
+```typescript
+"use client";
+
+import { useState, useCallback, useRef } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Loader2, Sparkles, Upload } from "lucide-react";
+
+interface ScriptEditorProps {
+  script: ScriptDetail | null;
+  editContent: string;
+  setEditContent: (v: string) => void;
+  episodeContentMap: Record<number, string>;
+  setEpisodeContentMap: (v: Record<number, string>) => void;
+  activeEpisode: number;
+  setActiveEpisode: (v: number) => void;
+  isUploading: boolean;
+  uploadProgress: string;
+  analyzeProgress: string;
+  onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAutoSplitContent: () => void;
+}
+
+interface ScriptDetail {
+  id: string;
+  title: string;
+  content: string;
+  episodeCount?: number;
+  // ... 其他字段保持与原组件一致
+}
+
+export default function ScriptEditor({
+  script,
+  editContent,
+  setEditContent,
+  episodeContentMap,
+  setEpisodeContentMap,
+  activeEpisode,
+  setActiveEpisode,
+  isUploading,
+  uploadProgress,
+  analyzeProgress,
+  onFileUpload,
+}: ScriptEditorProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 单集内容更新
+  const handleEpisodeContentChange = useCallback((episode: number, content: string) => {
+    setEpisodeContentMap(prev => {
+      const updatedMap = { ...prev, [episode]: content };
+      const allContent = Object.entries(updatedMap)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([, c]) => c)
+        .join('\n\n');
+      setEditContent(allContent);
+      return updatedMap;
+    });
+  }, [setEpisodeContentMap, setEditContent]);
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 p-6">
+      {/* 进度显示 */}
+      {(isUploading || uploadProgress || analyzeProgress) && (
+        <div className="mb-4 p-3 bg-[#0ABAB5]/10 border border-[#0ABAB5]/30 rounded-lg flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-[#0ABAB5]" />
+          <span className="text-sm text-[#0ABAB5]">{uploadProgress || analyzeProgress || '处理中...'}</span>
+        </div>
+      )}
+
+      {/* 操作栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">剧本编辑</h2>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={onFileUpload}
+            accept=".txt,.md,.docx,.pdf"
+            className="hidden"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+          >
+            <Upload className="w-4 h-4 mr-1" />
+            上传剧本
+          </Button>
+        </div>
+      </div>
+
+      {/* 集数信息 */}
+      <div className="flex items-center gap-2 text-xs text-[#888888] mb-2">
+        <span>共 {script?.episodeCount || 1} 集</span>
+        {script?.episodeCount && script.episodeCount > 1 && (
+          <>
+            <span className="text-[#0ABAB5]">|</span>
+            <span>当前第 {activeEpisode} 集</span>
+          </>
+        )}
+      </div>
+
+      {/* 集数标签栏 */}
+      {script?.episodeCount && script.episodeCount > 1 && (
+        <>
+          <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-[#333]">
+            {Array.from({ length: script.episodeCount }, (_, i) => i + 1).map(ep => (
+              <button
+                key={ep}
+                onClick={() => setActiveEpisode(ep)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  activeEpisode === ep 
+                    ? 'bg-[#0ABAB5] text-black' 
+                    : 'bg-[#1A1A1A] text-[#888888] hover:text-[#F5F5F5]'
+                }`}
+              >
+                第{ep}集
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-[#888888] mb-2">编辑单集内容会自动保存到总剧本</p>
+        </>
+      )}
+
+      {/* 剧本内容编辑器 */}
+      <textarea
+        key={activeEpisode}
+        className="flex-1 w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-sm text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none font-mono leading-relaxed"
+        value={script?.episodeCount && script.episodeCount > 1 
+          ? (episodeContentMap[activeEpisode] || editContent)
+          : editContent}
+        onChange={(e) => {
+          const newContent = e.target.value;
+          if (script?.episodeCount && script.episodeCount > 1) {
+            handleEpisodeContentChange(activeEpisode, newContent);
+          } else {
+            setEditContent(newContent);
+          }
+        }}
+        placeholder="在此输入或粘贴剧本内容..."
+      />
+    </div>
+  );
+}
+```
+
+---
+
+### 第三步：创建 StoryboardView.tsx
+
+**新增文件**：`/src/components/script-views/StoryboardView.tsx`
+
+```typescript
+"use client";
+
+import { useState, useCallback } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { StoryboardCard, ScriptStoryboard } from "@/components/StoryboardCard";
+import { Loader2, Sparkles, Download, Film } from "lucide-react";
+
+interface StoryboardViewProps {
+  storyboards: ScriptStoryboard[];
+  isSplitting: boolean;
+  onSplitScenes: () => void;
+  onGenerateImage: (index: number, ratio?: string) => void;
+  onExportExcel: () => void;
+}
+
+export default function StoryboardView({
+  storyboards,
+  isSplitting,
+  onSplitScenes,
+  onGenerateImage,
+  onExportExcel,
+}: StoryboardViewProps) {
+  const [generatingIndex, setGeneratingIndex] = useState<number | null>(null);
+  const [imgRatio, setImgRatio] = useState("16:9");
+
+  const handleGenerateImage = useCallback(async (index: number) => {
+    setGeneratingIndex(index);
+    try {
+      await onGenerateImage(index, imgRatio);
+    } finally {
+      setGeneratingIndex(null);
+    }
+  }, [imgRatio, onGenerateImage]);
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 p-6">
+      {/* 操作栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">分镜列表</h2>
+          <span className="text-sm text-[#888888]">共 {storyboards.length} 个分镜</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* 比例选择 */}
+          <select
+            value={imgRatio}
+            onChange={(e) => setImgRatio(e.target.value)}
+            className="bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-sm"
+          >
+            <option value="16:9">16:9 横版</option>
+            <option value="9:16">9:16 竖版</option>
+            <option value="1:1">1:1 方版</option>
+          </select>
+          <Button
+            onClick={onSplitScenes}
+            disabled={isSplitting}
+          >
+            {isSplitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                生成分镜中...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-2" />
+                生成分镜
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={onExportExcel}
+            disabled={storyboards.length === 0}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            导出Excel
+          </Button>
+        </div>
+      </div>
+
+      {/* 分镜列表 */}
+      <div className="flex-1 overflow-y-auto">
+        {storyboards.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-[#888888]">
+            <Film className="w-12 h-12 mb-4 opacity-50" />
+            <p>暂无分镜数据</p>
+            <p className="text-sm mt-2">点击「生成分镜」按钮开始生成</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {storyboards.map((storyboard, index) => (
+              <StoryboardCard
+                key={storyboard.num || index}
+                storyboard={storyboard}
+                index={index}
+                isGenerating={generatingIndex === index}
+                imgRatio={imgRatio}
+                onGenerateImage={() => handleGenerateImage(index)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 第四步：创建 RolesView.tsx
+
+**新增文件**：`/src/components/script-views/RolesView.tsx`
+
+```typescript
+"use client";
+
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Users, Loader2, Pencil, Trash2 } from "lucide-react";
+
+interface ScriptRole {
+  name: string;
+  tag: string;
+  description: string;
+  lines: number;
+  appearance: string;
+  costume: string;
+  feature: string;
+}
+
+interface RolesViewProps {
+  roles: ScriptRole[];
+  isExtracting: boolean;
+  onExtractRoles: () => void;
+  onEditRole: (index: number) => void;
+  onDeleteRole: (index: number) => void;
+}
+
+export default function RolesView({
+  roles,
+  isExtracting,
+  onExtractRoles,
+  onEditRole,
+  onDeleteRole,
+}: RolesViewProps) {
+  return (
+    <div className="flex-1 flex flex-col min-h-0 p-6">
+      {/* 操作栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">角色列表</h2>
+          <span className="text-sm text-[#888888]">共 {roles.length} 个角色</span>
+        </div>
+        <Button
+          onClick={onExtractRoles}
+          disabled={isExtracting}
+        >
+          {isExtracting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              提取中...
+            </>
+          ) : (
+            <>
+              <Users className="w-4 h-4 mr-2" />
+              提取角色
+            </>
+          )}
+        </Button>
+      </div>
+
+      {/* 角色列表 */}
+      <div className="flex-1 overflow-y-auto">
+        {roles.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-[#888888]">
+            <Users className="w-12 h-12 mb-4 opacity-50" />
+            <p>暂无角色数据</p>
+            <p className="text-sm mt-2">点击「提取角色」按钮开始分析</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {roles.map((role, index) => (
+              <div
+                key={index}
+                className="bg-[#1A1A1A] border border-[#333] rounded-xl p-4 hover:border-[#0ABAB5]/50 transition-colors"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="font-medium">{role.name}</h3>
+                    <Badge variant="outline" className="mt-1 text-xs">
+                      {role.tag}
+                    </Badge>
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => onEditRole(index)}
+                      className="p-1 text-[#888888] hover:text-[#0ABAB5]"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteRole(index)}
+                      className="p-1 text-[#888888] hover:text-red-400"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-[#888888] line-clamp-2">{role.description}</p>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {role.feature && (
+                    <Badge variant="secondary" className="text-xs">
+                      {role.feature}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 第五步：创建 OptimizeView.tsx
+
+**新增文件**：`/src/components/script-views/OptimizeView.tsx`
+
+```typescript
+"use client";
+
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Loader2, Sparkles, Users, Film, Zap } from "lucide-react";
+
+interface OptimizeViewProps {
+  editContent: string;
+  optimizedStreamText: string;
+  isOptimizingStream: boolean;
+  optimizingMode: 'polish' | 'character' | 'visual' | 'rhythm';
+  onModeChange: (mode: 'polish' | 'character' | 'visual' | 'rhythm') => void;
+  onOptimize: () => void;
+  onTextChange: (text: string) => void;
+  onApplyToScript: () => void;
+}
+
+export default function OptimizeView({
+  editContent,
+  optimizedStreamText,
+  isOptimizingStream,
+  optimizingMode,
+  onModeChange,
+  onOptimize,
+  onTextChange,
+  onApplyToScript,
+}: OptimizeViewProps) {
+  const modeOptions = [
+    { key: 'polish', label: '整体润色', desc: '优化语言和节奏', icon: Sparkles },
+    { key: 'character', label: '人物增强', desc: '完善人设和对话', icon: Users },
+    { key: 'visual', label: '画面感强化', desc: '添加场景描写', icon: Film },
+    { key: 'rhythm', label: '节奏调整', desc: '控制剧情快慢', icon: Zap },
+  ] as const;
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 p-6">
+      {/* 操作栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">AI 优化</h2>
+        <Button 
+          onClick={onOptimize} 
+          disabled={isOptimizingStream || !editContent.trim()}
+        >
+          {isOptimizingStream ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              优化中...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4 mr-2" />
+              开始优化
+            </>
+          )}
+        </Button>
+      </div>
+
+      {/* 优化模式选择 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {modeOptions.map(({ key, label, desc, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => onModeChange(key)}
+            className={`p-4 rounded-xl border text-left transition-colors ${
+              optimizingMode === key
+                ? 'bg-[#0ABAB5]/10 border-[#0ABAB5]'
+                : 'bg-[#1A1A1A] border-[#333] hover:border-[#0ABAB5]'
+            }`}
+          >
+            <Icon className="w-5 h-5 text-[#0ABAB5] mb-2" />
+            <h3 className="font-medium">{label}</h3>
+            <p className="text-xs text-[#888888]">{desc}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* 双栏对比视图 */}
+      <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
+        {/* 原文 */}
+        <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#333]">
+          <div className="px-4 py-2 bg-[#141414] border-b border-[#333] text-sm text-[#888888] flex-shrink-0">
+            原文
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <pre className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+              {editContent || '暂无内容'}
+            </pre>
+          </div>
+        </div>
+
+        {/* 优化结果 */}
+        <div className="flex-1 flex flex-col bg-[#1A1A1A] rounded-xl overflow-hidden border border-[#0ABAB5]/50">
+          <div className="px-4 py-2 bg-[#0ABAB5]/10 border-b border-[#0ABAB5]/30 text-sm flex items-center justify-between flex-shrink-0">
+            <span className="text-[#0ABAB5] font-medium">优化结果</span>
+            {optimizedStreamText && (
+              <Button size="sm" onClick={onApplyToScript}>
+                应用到剧本
+              </Button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {isOptimizingStream ? (
+              <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                {optimizedStreamText || '正在优化中...'}
+                <span className="animate-pulse">|</span>
+              </div>
+            ) : optimizedStreamText ? (
+              <textarea
+                className="w-full h-full min-h-[200px] bg-transparent border-none outline-none resize-none text-sm text-foreground whitespace-pre-wrap leading-relaxed"
+                value={optimizedStreamText}
+                onChange={(e) => onTextChange(e.target.value)}
+                placeholder="优化结果将显示在这里，可以手动编辑..."
+              />
+            ) : (
+              <div className="text-center text-[#888888] py-8">
+                <p>点击「开始优化」按钮生成优化内容</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 第六步：简化主组件 scripts/[id]/page.tsx
+
+**修改文件**：`/src/app/scripts/[id]/page.tsx`
+
+**在文件顶部添加导入**：
+```typescript
+import { ScriptEditor, StoryboardView, RolesView, OptimizeView } from "@/components/script-views";
+```
+
+**替换视图渲染部分**（找到所有 `{activeView === "xxx" && (` 开头的代码块，替换为子组件）：
+
+```typescript
+// 替换前：所有视图渲染逻辑混在一起
+{activeView === "chat" && (
+  <ScriptChatPanel scriptId={id} onApplyToScript={(content) => {
+    setEditContent(content);
+    setActiveView("script");
+  }} />
+)}
+
+{activeView === "script" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 几百行剧本编辑代码 */}
+  </div>
+)}
+
+{activeView === "storyboard" && (
+  <div className="flex-1 flex flex-col min-h-0 p-6">
+    {/* 几百行分镜代码 */}
+  </div>
+)
+// ... 其他视图
+```
+
+**替换后**：
+```typescript
+{activeView === "chat" && (
+  <ScriptChatPanel 
+    scriptId={id} 
+    onApplyToScript={(content) => {
+      setEditContent(content);
+      setActiveView("script");
+    }} 
+  />
+)}
+
+{activeView === "script" && (
+  <ScriptEditor
+    script={script}
+    editContent={editContent}
+    setEditContent={setEditContent}
+    episodeContentMap={episodeContentMap}
+    setEpisodeContentMap={setEpisodeContentMap}
+    activeEpisode={activeEpisode}
+    setActiveEpisode={setActiveEpisode}
+    isUploading={isUploading}
+    uploadProgress={uploadProgress}
+    analyzeProgress={analyzeProgress}
+    onFileUpload={handleFileUpload}
+    onAutoSplitContent={autoSplitContent}
+  />
+)}
+
+{activeView === "storyboard" && (
+  <StoryboardView
+    storyboards={script?.storyboards || []}
+    isSplitting={isSplitting}
+    onSplitScenes={handleSplitScenes}
+    onGenerateImage={handleGenerateStoryboardImage}
+    onExportExcel={handleExportStoryboardExcel}
+  />
+)}
+
+{activeView === "roles" && (
+  <RolesView
+    roles={script?.roles || []}
+    isExtracting={isExtracting}
+    onExtractRoles={handleExtractRoles}
+    onEditRole={(index) => {/* ... */}}
+    onDeleteRole={(index) => {/* ... */}}
+  />
+)}
+
+{activeView === "optimize" && (
+  <OptimizeView
+    editContent={editContent}
+    optimizedStreamText={optimizedStreamText}
+    isOptimizingStream={isOptimizingStream}
+    optimizingMode={optimizingMode}
+    onModeChange={setOptimizingMode}
+    onOptimize={handleStreamOptimize}
+    onTextChange={setOptimizedStreamText}
+    onApplyToScript={() => {
+      setEditContent(optimizedStreamText);
+      toast.success('已应用到剧本');
+    }}
+  />
+)}
+```
+
+---
+
+## 四、代码保护规则
+
+| 规则 | 说明 |
+|------|------|
+| **不修改API接口** | 所有 `apiFetch` 调用保持原样 |
+| **不修改数据库结构** | 不增删字段 |
+| **不修改组件样式** | className 保持一致 |
+| **不修改函数签名** | 回调参数类型和顺序不变 |
+| **保留错误处理** | 所有 try-catch、toast 提示保留 |
+| **保留移动端适配** | MobileTabBar 等组件不改动 |
+
+---
+
+## 五、渐进式测试清单
+
+| 步骤 | 测试内容 | 通过标准 |
+|------|---------|---------|
+| **1. 拆分ScriptEditor** | 上传剧本、编辑、保存 | 功能正常 |
+| **2. 拆分StoryboardView** | 生成分镜、生成图片、导出Excel | 功能正常 |
+| **3. 拆分RolesView** | 提取角色、编辑、删除 | 功能正常 |
+| **4. 拆分OptimizeView** | AI优化、双栏对比、应用到剧本 | 功能正常 |
+| **5. 全部整合** | 切换所有视图 | 无报错、无卡顿 |
+
+---
+
+## 六、性能验证清单
+
+- [ ] 切换视图响应时间 < 100ms
+- [ ] 剧本编辑时，其他视图数据不丢失
+- [ ] 滚动分镜列表流畅
+- [ ] 首屏加载时间明显加快
+- [ ] 点击按钮无延迟
+- [ ] 移动端操作流畅
+
+
+## 禁止指令
+
+---
+
+### 一、禁止修改的文件和逻辑
+
+1. **禁止删除或移动** `AppShell` 组件及其引用
+2. **禁止修改** `StoryboardCard` 组件的内部渲染逻辑
+3. **禁止修改** `apiFetch` 函数的签名和行为
+4. **禁止修改** `/api/scripts/[id]/route.ts` 的 API 接口定义
+5. **禁止修改** 数据库 Schema（增删字段、修改字段类型）
+6. **禁止修改** `useAIStream` hook 的核心逻辑（除非明确修复 Bug）
+7. **禁止修改** 移动端适配相关的 CSS 类名和布局结构
+8. **禁止修改** Toast 提示的文案和调用方式
+9. **禁止修改** 现有的 TypeScript 接口定义（Interface），除非扩展新字段
+10. **禁止修改** 路由跳转逻辑（如 `router.push` 的路径）
+
+---
+
+### 二、禁止的代码实践
+
+1. **禁止** 使用 `as any` 强制类型转换
+2. **禁止** 使用 `// @ts-ignore` 忽略 TypeScript 错误
+3. **禁止** 在子组件中直接调用 API（必须通过 props 回调）
+4. **禁止** 在子组件中修改 props 传入的状态
+5. **禁止** 使用全局变量存储临时状态
+6. **禁止** 在 render 中创建新的函数引用（如 `onClick={() => handleXxx()}`）
+7. **禁止** 删除或修改 `.env` 环境变量配置
+8. **禁止** 在组件卸载后继续调用 `setState`
+9. **禁止** 使用 `window.location` 进行路由跳转
+10. **禁止** 在子组件中使用 `useParams` 或 `useRouter`（统一从主组件传递）
+
+---
+
+### 三、禁止的优化方案
+
+1. **禁止** 引入 Context API 替代 props 传递
+2. **禁止** 使用 Redux/MobX 等状态管理库
+3. **禁止** 使用 `useMemo` 或 `useCallback` 包裹所有函数（按需使用）
+4. **禁止** 将所有组件改为 `React.lazy` 懒加载（仅对体积大的组件使用）
+5. **禁止** 使用虚拟滚动库替代原生列表（除非列表超过 100 条）
+6. **禁止** 合并多个 API 请求为一个（保持原有请求粒度）
+
+---
+
+### 四、禁止的破坏性操作
+
+1. **禁止** 删除 `node_modules` 或 `pnpm-lock.yaml`
+2. **禁止** 修改 `package.json` 的依赖版本
+3. **禁止** 运行 `pnpm update` 全量更新依赖
+4. **禁止** 删除 `.git` 目录
+5. **禁止** 修改 `next.config.ts` 的核心配置
+6. **禁止** 删除或修改 `.env.example` 文件
+7. **禁止** 在生产环境进行任何代码修改（必须先在开发环境测试）
+8. **禁止** 直接修改数据库中的数据
+9. **禁止** 提交未经测试的代码到版本库
+10. **禁止** 删除日志输出（console.log、console.error）
