@@ -20,7 +20,11 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  Film,
+  ChevronDown,
 } from 'lucide-react';
+// P2: 影视级提示词模板集成
+import { SCENE_PRESETS, SHOT_TYPES, CAMERA_MOVEMENTS, LIGHTING_SETUPS } from '@/lib/prompt-engineering';
 
 // 生成唯一的ID
 function generateId(): string {
@@ -199,6 +203,14 @@ export default function VideoCreatePage() {
   
   // 手机端参数面板
   const [showParams, setShowParams] = useState(false);
+
+  // P2: 表演场景选择器状态
+  const [showSceneSelector, setShowSceneSelector] = useState(false);
+  const [selectedScene, setSelectedScene] = useState<string | null>(null);
+  const [showFilmCommands, setShowFilmCommands] = useState(false);
+  const [selectedShot, setSelectedShot] = useState<string | null>(null);
+  const [selectedCamera, setSelectedCamera] = useState<string | null>(null);
+  const [selectedLighting, setSelectedLighting] = useState<string | null>(null);
 
   // 初始化模型
   useEffect(() => {
@@ -625,6 +637,227 @@ export default function VideoCreatePage() {
                 placeholder={mode === 'text2video' ? '描述想要生成的视频内容' : '描述视频运动方式（可选）'}
                 className="w-full h-[90px] p-3 bg-[#141414] border border-[#333333] rounded-lg text-white text-sm placeholder:text-[#666666] resize-none focus:outline-none focus:border-[#0ABAB5]"
               />
+            </div>
+
+            {/* P2: 表演场景选择器 */}
+            <div className="py-2">
+              <button
+                onClick={() => setShowSceneSelector(!showSceneSelector)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#1A1A1A] border border-[#333] hover:border-[#555] transition-colors"
+                aria-expanded={showSceneSelector}
+                aria-label="表演场景模板选择器"
+              >
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-[#0ABAB5]" aria-hidden="true" />
+                  <span className="text-sm text-[#ccc]">
+                    {selectedScene ? `已选择: ${SCENE_PRESETS[selectedScene as keyof typeof SCENE_PRESETS]?.name || selectedScene}` : '选择表演场景模板'}
+                  </span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-[#888] transition-transform ${showSceneSelector ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+
+              {showSceneSelector && (
+                <div className="mt-2 p-3 bg-[#1A1A1A] rounded-lg border border-[#333] space-y-2">
+                  <p className="text-xs text-[#888]">基于影视级提示词工程的场景预设，自动优化镜头语言和灯光氛围</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(SCENE_PRESETS).map(([key, preset]) => (
+                      <button
+                        key={key}
+                        onClick={() => {
+                          // 如果重复选择同一场景，不做任何操作
+                          if (selectedScene === key) {
+                            setShowSceneSelector(false);
+                            return;
+                          }
+                          setSelectedScene(key);
+                          // 自动填充场景描述到 prompt：先移除旧场景描述，再追加新的
+                          const sceneDesc = `${preset.name}场景，${preset.description}`;
+                          let currentPrompt = prompt.trim();
+                          // 移除之前追加的场景描述（如果存在）
+                          if (selectedScene) {
+                            const oldPreset = SCENE_PRESETS[selectedScene as keyof typeof SCENE_PRESETS];
+                            if (oldPreset) {
+                              const oldDesc = `${oldPreset.name}场景，${oldPreset.description}`;
+                              currentPrompt = currentPrompt.replace(new RegExp('，?' + oldDesc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '').trim();
+                              // 移除末尾的逗号
+                              currentPrompt = currentPrompt.replace(/，$/, '').trim();
+                            }
+                          }
+                          if (currentPrompt) {
+                            updatePersistedState({ prompt: currentPrompt + '，' + sceneDesc });
+                          } else {
+                            updatePersistedState({ prompt: sceneDesc });
+                          }
+                          setShowSceneSelector(false);
+                        }}
+                        className={`p-2 rounded-lg text-left text-sm transition-colors ${
+                          selectedScene === key
+                            ? 'bg-[#0ABAB5]/20 border border-[#0ABAB5]/50 text-[#0ABAB5]'
+                            : 'bg-[#141414] border border-[#333] text-[#ccc] hover:border-[#555]'
+                        }`}
+                      >
+                        <div className="font-medium">{preset.name}</div>
+                        <div className="text-xs text-[#888] mt-0.5">{preset.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedScene && (
+                    <button
+                      onClick={() => {
+                        // 清除 prompt 中的场景描述
+                        const oldPreset = SCENE_PRESETS[selectedScene as keyof typeof SCENE_PRESETS];
+                        if (oldPreset) {
+                          const oldDesc = `${oldPreset.name}场景，${oldPreset.description}`;
+                          let currentPrompt = prompt.trim();
+                          currentPrompt = currentPrompt.replace(new RegExp('，?' + oldDesc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '').trim();
+                          currentPrompt = currentPrompt.replace(/，$/, '').trim();
+                          updatePersistedState({ prompt: currentPrompt });
+                        }
+                        setSelectedScene(null);
+                      }}
+                      className="text-xs text-[#888] hover:text-[#0ABAB5] transition-colors"
+                      aria-label="清除场景选择"
+                    >
+                      清除选择
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* P-Show-3: 影视指令折叠面板 */}
+            <div className="py-2">
+              <button
+                onClick={() => setShowFilmCommands(!showFilmCommands)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#1A1A1A] border border-[#333] hover:border-[#555] transition-colors"
+                aria-expanded={showFilmCommands}
+                aria-label="影视指令选择器"
+              >
+                <div className="flex items-center gap-2">
+                  <VideoIcon className="w-4 h-4 text-[#7C5CFF]" aria-hidden="true" />
+                  <span className="text-sm text-[#ccc]">
+                    {selectedShot || selectedCamera || selectedLighting 
+                      ? `影视指令: ${[
+                          selectedShot ? SHOT_TYPES[selectedShot as keyof typeof SHOT_TYPES]?.name : null,
+                          selectedCamera ? CAMERA_MOVEMENTS[selectedCamera as keyof typeof CAMERA_MOVEMENTS]?.name : null,
+                          selectedLighting ? LIGHTING_SETUPS[selectedLighting as keyof typeof LIGHTING_SETUPS]?.name : null
+                        ].filter(Boolean).join(' + ')}`
+                      : '添加影视指令（景别/运镜/灯光）'}
+                  </span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-[#888] transition-transform ${showFilmCommands ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+
+              {showFilmCommands && (
+                <div className="mt-2 p-3 bg-[#1A1A1A] rounded-lg border border-[#333] space-y-3">
+                  <p className="text-xs text-[#888]">选择景别、运镜和灯光来增强视频的专业感</p>
+                  
+                  {/* 景别选择 */}
+                  <div>
+                    <label className="text-xs text-[#666] mb-1 block">景别</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {Object.entries(SHOT_TYPES).slice(0, 6).map(([key, shot]) => (
+                        <button
+                          key={key}
+                          onClick={() => setSelectedShot(selectedShot === key ? null : key)}
+                          className={`px-2 py-1.5 rounded text-xs transition-colors ${
+                            selectedShot === key
+                              ? 'bg-[#7C5CFF]/20 border border-[#7C5CFF]/50 text-[#7C5CFF]'
+                              : 'bg-[#141414] border border-[#333] text-[#aaa] hover:border-[#555]'
+                          }`}
+                        >
+                          {shot.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* 运镜选择 */}
+                  <div>
+                    <label className="text-xs text-[#666] mb-1 block">运镜</label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {Object.entries(CAMERA_MOVEMENTS).slice(0, 8).map(([key, camera]) => (
+                        <button
+                          key={key}
+                          onClick={() => setSelectedCamera(selectedCamera === key ? null : key)}
+                          className={`px-2 py-1.5 rounded text-xs transition-colors ${
+                            selectedCamera === key
+                              ? 'bg-[#7C5CFF]/20 border border-[#7C5CFF]/50 text-[#7C5CFF]'
+                              : 'bg-[#141414] border border-[#333] text-[#aaa] hover:border-[#555]'
+                          }`}
+                        >
+                          {camera.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* 灯光选择 */}
+                  <div>
+                    <label className="text-xs text-[#666] mb-1 block">灯光</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {Object.entries(LIGHTING_SETUPS).slice(0, 6).map(([key, lighting]) => (
+                        <button
+                          key={key}
+                          onClick={() => setSelectedLighting(selectedLighting === key ? null : key)}
+                          className={`px-2 py-1.5 rounded text-xs transition-colors ${
+                            selectedLighting === key
+                              ? 'bg-[#7C5CFF]/20 border border-[#7C5CFF]/50 text-[#7C5CFF]'
+                              : 'bg-[#141414] border border-[#333] text-[#aaa] hover:border-[#555]'
+                          }`}
+                        >
+                          {lighting.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* 操作按钮 */}
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={() => {
+                        // 构建影视指令并追加到 prompt
+                        const parts: string[] = [];
+                        if (selectedShot) {
+                          const shot = SHOT_TYPES[selectedShot as keyof typeof SHOT_TYPES];
+                          parts.push(shot.english);
+                        }
+                        if (selectedCamera) {
+                          const camera = CAMERA_MOVEMENTS[selectedCamera as keyof typeof CAMERA_MOVEMENTS];
+                          parts.push(camera.english);
+                        }
+                        if (selectedLighting) {
+                          const lighting = LIGHTING_SETUPS[selectedLighting as keyof typeof LIGHTING_SETUPS];
+                          parts.push(lighting.english);
+                        }
+                        if (parts.length > 0) {
+                          const filmCommand = parts.join(', ');
+                          updatePersistedState({ 
+                            prompt: prompt.trim() 
+                              ? `${prompt.trim()}, ${filmCommand}` 
+                              : filmCommand 
+                          });
+                          setShowFilmCommands(false);
+                        }
+                      }}
+                      disabled={!selectedShot && !selectedCamera && !selectedLighting}
+                      className="flex-1 py-1.5 rounded bg-[#7C5CFF] hover:bg-[#7C5CFF]/90 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
+                    >
+                      追加到提示词
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedShot(null);
+                        setSelectedCamera(null);
+                        setSelectedLighting(null);
+                      }}
+                      className="px-3 py-1.5 rounded bg-[#333] hover:bg-[#444] text-[#aaa] text-xs transition-colors"
+                    >
+                      清除
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             
             {/* 图生视频 - 首帧图片上传 */}

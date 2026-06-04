@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from '@/lib/api-client';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import dagre from 'dagre';
@@ -32,6 +33,7 @@ import {
   OutputNode,
   WorkflowActionsContext,
 } from '@/components/workspace/node-components';
+import { PropertyPanel } from '@/components/workspace/panels/PropertyPanel';
 import {
   Save,
   Undo2,
@@ -196,9 +198,11 @@ export default function WorkspacePage() {
   const [zoom, setZoom] = useState(100);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isRunningAll, setIsRunningAll] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const nodeIdCounter = useRef(1);
   const nodePosOffset = useRef(0);
   const runAbortRef = useRef(false);
+  const isConnecting = useRef(false);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -239,6 +243,8 @@ export default function WorkspacePage() {
   };
 
   const handleUndo = useCallback(() => {
+    // 防御：连接过程中禁止撤销
+    if (isConnecting.current) return;
     const idx = historyIndexRef.current;
     if (idx <= 0) return;
     skipHistoryRef.current = true;
@@ -249,6 +255,8 @@ export default function WorkspacePage() {
   }, [setNodes, setEdges]);
 
   const handleRedo = useCallback(() => {
+    // 防御：连接过程中禁止重做
+    if (isConnecting.current) return;
     const idx = historyIndexRef.current;
     if (idx >= historyRef.current.length - 1) return;
     skipHistoryRef.current = true;
@@ -277,6 +285,8 @@ export default function WorkspacePage() {
   }, [nodes, edges]);
 
   const handleSaveWorkflow = useCallback(async (silent = false) => {
+    // 防御：连接过程中禁止保存
+    if (isConnecting.current) return;
     if (!silent) setSaveStatus('saving');
     try {
       const res = await apiFetch('/api/workflows/wf-1', {
@@ -615,7 +625,8 @@ export default function WorkspacePage() {
   };
 
   const handleRunAll = async () => {
-    if (isRunningAll || nodes.length === 0) return;
+    // 防御：连接过程中禁止运行工作流
+    if (isConnecting.current || isRunningAll || nodes.length === 0) return;
     runAbortRef.current = false;
     setIsRunningAll(true);
     setNodes((prev) => {
@@ -628,7 +639,7 @@ export default function WorkspacePage() {
     nodesRef.current.forEach((n) => inDegree.set(n.id, 0));
     edgesRef.current.forEach((e) => { inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1); });
     // Start with nodes that have no dependencies
-    let queue = nodesRef.current.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
+    const queue = nodesRef.current.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
     // 串行执行：确保每个节点完成后才执行下一个，避免状态竞争
     while (queue.length > 0 && !runAbortRef.current) {
       const nodeId = queue.shift();
@@ -712,11 +723,26 @@ export default function WorkspacePage() {
   }, [setNodes, setEdges]);
 
   const onConnect: OnConnect = useCallback(
-    (params) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#555555', strokeWidth: 1.5 } }, eds)),
+    (params) => {
+      // 防御：连接过程中标记状态，防止其他逻辑干扰
+      isConnecting.current = true;
+      // 防御：校验连接参数有效性
+      if (!params?.source || !params?.target) {
+        console.warn('[onConnect] 无效连接参数:', params);
+        isConnecting.current = false;
+        return;
+      }
+      // 只操作 edges，绝不操作 nodes
+      setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#555555', strokeWidth: 1.5 } }, eds));
+      // 延迟重置连接标记
+      setTimeout(() => { isConnecting.current = false; }, 100);
+    },
     [setEdges]
   );
 
   const handleAutoLayout = useCallback(() => {
+    // 防御：连接过程中禁止自动布局
+    if (isConnecting.current) return;
     const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'LR');
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
@@ -724,6 +750,8 @@ export default function WorkspacePage() {
   }, [nodes, edges, setNodes, setEdges]);
 
   const handleAddNode = (type: string, label: string) => {
+    // 防御：连接过程中禁止添加节点
+    if (isConnecting.current) return;
     const id = `node-${nodeIdCounter.current++}`;
     nodePosOffset.current += 50;
     const offset = nodePosOffset.current % 300;
@@ -744,9 +772,20 @@ export default function WorkspacePage() {
   };
 
   const handleDeleteNode = useCallback((nodeId: string) => {
+    // 防御：连接过程中禁止删除节点
+    if (isConnecting.current) return;
     setNodes((prev) => prev.filter((n) => n.id !== nodeId));
     setEdges((prev) => prev.filter((e) => e.source !== nodeId && e.target !== nodeId));
+    setSelectedNode(null);
   }, [setNodes, setEdges]);
+
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+  }, []);
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+  }, []);
 
   const handleExecuteNode = useCallback(async (nodeId: string) => {
     if (isRunningAll) return;
@@ -756,7 +795,23 @@ export default function WorkspacePage() {
   }, [isRunningAll, executeNodeById]);
 
   return (
-    <AppShell>
+    <ErrorBoundary
+      fallback={
+        <div className="h-screen flex items-center justify-center bg-[#0A0A0A]">
+          <div className="text-center p-8 bg-[#141414] rounded-xl border border-[#333333] max-w-md">
+            <div className="text-red-400 mb-4 text-lg">工作区加载失败</div>
+            <p className="text-[#888888] text-sm mb-4">画布组件发生错误，请刷新页面重试</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-[#0ABAB5] text-black rounded-lg text-sm hover:opacity-90"
+            >
+              刷新页面
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <AppShell>
       <div className="h-[calc(100vh-3.5rem)] flex relative">
         {/* 左侧节点面板 - 仅桌面端显示 */}
         <div className="workspace-left-panel w-52 shrink-0 border-r border-[#333333]/30 bg-[#141414] overflow-y-auto h-[calc(100vh-3.5rem)] flex-col">
@@ -838,6 +893,8 @@ export default function WorkspacePage() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onEdgeClick={(_event, edge) => setEdges((eds) => eds.filter((e) => e.id !== edge.id))}
+              onNodeClick={onNodeClick}
+              onPaneClick={onPaneClick}
               nodeTypes={nodeTypes}
               deleteKeyCode={['Backspace', 'Delete']}
               fitView
@@ -908,8 +965,10 @@ export default function WorkspacePage() {
           </WorkflowActionsContext.Provider>
         </div>
 
-
+        {/* 右侧属性面板 */}
+        <PropertyPanel selectedNode={selectedNode} onDeleteNode={handleDeleteNode} />
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

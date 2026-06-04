@@ -197,6 +197,9 @@ export default function ImageCreatePage() {
   const [showImageMention, setShowImageMention] = useState(false);
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 角色一致性开关
+  const [characterConsistency, setCharacterConsistency] = useState(false);
   
   // 获取当前模型配置
   const modelConfig = useMemo(() => getImageModelConfig(currentModel), [currentModel]);
@@ -262,6 +265,14 @@ export default function ImageCreatePage() {
       const response = await fetch('/api/assets?category=image', {
         headers: authHeaders,
       });
+      
+      // 检查响应状态
+      if (!response.ok) {
+        console.warn('加载历史记录失败: HTTP', response.status);
+        setHistoryLoaded(true);
+        return;
+      }
+      
       const result = await response.json();
       
       if (result.success && result.data) {
@@ -922,6 +933,11 @@ export default function ImageCreatePage() {
     
     // 处理@图片引用
     const { processedPrompt, referencedImages } = processMentionReferences(prompt, referenceImages);
+
+    // 角色一致性指令追加
+    const finalPrompt = characterConsistency
+      ? `${processedPrompt}. Character must maintain exact same face, hairstyle, clothing, and body proportions across all frames. Same person, same appearance, zero variation.`
+      : processedPrompt;
     
     // 确定最终使用的参考图片：
     // 1. 如果有@引用，使用@引用的图片
@@ -965,7 +981,7 @@ export default function ImageCreatePage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: processedPrompt || prompt.trim(),
+          prompt: finalPrompt,
           model: currentModel,
           size: size,
           n: currentCount,
@@ -1003,7 +1019,7 @@ export default function ImageCreatePage() {
           const size = getModelSize(currentModel, currentRatio);
           const item: HistoryItem = {
             id: generateId(),
-            prompt: processedPrompt || prompt.trim(),
+            prompt: finalPrompt,
             model: currentModel,
             size: size,
             ratio: currentRatio,
@@ -1025,26 +1041,26 @@ export default function ImageCreatePage() {
           setCurrentPollingId(combinedTaskId);
           localStorage.setItem(STORAGE_KEY_POLLING, JSON.stringify({
             taskId: combinedTaskId,
-            prompt: processedPrompt || prompt.trim(),
+            prompt: finalPrompt,
             model: currentModel,
             ratio: currentRatio,
             n: currentCount,
             completed: false,
           }));
-          pollTaskResult(combinedTaskId, processedPrompt || prompt.trim(), currentModel, currentRatio, currentCount);
+          pollTaskResult(combinedTaskId, finalPrompt, currentModel, currentRatio, currentCount);
         } else if (taskId) {
           setCurrentPollingId(taskId);
           // 保存生图任务状态到localStorage
           localStorage.setItem(STORAGE_KEY_POLLING, JSON.stringify({
             taskId,
-            prompt: processedPrompt || prompt.trim(),
+            prompt: finalPrompt,
             model: currentModel,
             ratio: currentRatio,
             n: currentCount,
             completed: false,
           }));
           // 开始轮询，传递当前参数
-          pollTaskResult(taskId, processedPrompt || prompt.trim(), currentModel, currentRatio, currentCount);
+          pollTaskResult(taskId, finalPrompt, currentModel, currentRatio, currentCount);
         } else {
           setCurrentPollingId(null);
           setLoading(false);
@@ -1411,9 +1427,38 @@ export default function ImageCreatePage() {
                 </div>
               )}
             </div>
-            
+
+            {/* P-Show-4: 角色一致性开关 */}
+            <div className="flex items-center justify-between py-2 mt-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-white">角色一致性</span>
+                <span className="text-xs text-[#666666]">保持多帧角色外观统一</span>
+              </div>
+              <button
+                onClick={() => {
+                  const newValue = !characterConsistency;
+                  setCharacterConsistency(newValue);
+                  const consistencyText = ', character consistency, same face, same outfit';
+                  if (newValue && !prompt.includes('character consistency')) {
+                    updatePersistedState({ prompt: prompt + consistencyText });
+                  } else if (!newValue && prompt.includes('character consistency')) {
+                    updatePersistedState({ prompt: prompt.replace(consistencyText, '').trim() });
+                  }
+                }}
+                className={`relative w-10 h-5 rounded-full transition-colors ${
+                  characterConsistency ? 'bg-[#0ABAB5]' : 'bg-[#333333]'
+                }`}
+                aria-label={characterConsistency ? '关闭角色一致性' : '开启角色一致性'}
+                aria-pressed={characterConsistency}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  characterConsistency ? 'translate-x-5' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+
             {/* 问题4: 删除试用样例按钮 */}
-            
+
             {/* 问题3: 间距调整为20px（模型选择顶部间距） */}
             {/* 模型选择 */}
             <div className="space-y-2 mt-5">

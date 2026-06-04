@@ -7,6 +7,43 @@ import { logger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/security/ai-rate-limiter";
 import { validateTokenLimit } from "@/lib/security/token-limiter";
 import { recordApiCost, canUserProceed } from "@/lib/security/cost-alert";
+import { getSupabaseClient } from "@/storage/database/supabase-client";
+
+// 保存生成记录到数据库
+async function saveGenerationToDB(params: {
+  userId: string;
+  type: string;
+  prompt: string;
+  model: string;
+  imageUrls?: string[];
+  results?: unknown;
+  params?: Record<string, unknown>;
+}) {
+  try {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      logger.warn("[Save Generation] Supabase 客户端未初始化");
+      return;
+    }
+
+    const { data, error } = await supabase.from("generations").insert({
+      type: params.type,
+      prompt: params.prompt,
+      model: params.model,
+      user_id: params.userId,
+      params: params.params || {},
+      results: params.results || { imageUrls: params.imageUrls || [] },
+    }).select();
+
+    if (error) {
+      logger.error("[Save Generation] 保存失败:", error.message);
+    } else {
+      logger.debug("[Save Generation] 保存成功:", data?.[0]?.id);
+    }
+  } catch (err) {
+    logger.error("[Save Generation] 异常:", err);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -203,6 +240,15 @@ export async function POST(request: NextRequest) {
       // 记录成本
       recordApiCost("generate-image", userId);
 
+      // 保存到数据库
+      await saveGenerationToDB({
+        type: "image",
+        prompt,
+        model: model || "unknown",
+        results: result.imageUrls,
+        userId,
+      });
+
       return NextResponse.json({
         success: true,
         data: { 
@@ -231,6 +277,15 @@ export async function POST(request: NextRequest) {
       }
       
       if (imageUrls.length > 0) {
+        // 保存到数据库
+        await saveGenerationToDB({
+          type: "image",
+          prompt,
+          model: model || "wanxiang",
+          results: imageUrls,
+          userId,
+        });
+
         return NextResponse.json({
           success: true,
           data: { imageUrls },
@@ -243,7 +298,15 @@ export async function POST(request: NextRequest) {
     const taskIds = result.taskIds as string[] | undefined;
     
     if (taskIds && taskIds.length > 0) {
-      // 批量任务（即梦多图）
+      // 批量任务（即梦多图）- 保存任务ID
+      await saveGenerationToDB({
+        type: "image",
+        prompt,
+        model: model || "jimeng",
+        results: { taskIds, status: "pending" },
+        userId,
+      });
+
       return NextResponse.json({
         success: true,
         data: { taskIds },
@@ -251,6 +314,15 @@ export async function POST(request: NextRequest) {
     }
     
     if (taskId) {
+      // 单个任务 - 保存任务ID
+      await saveGenerationToDB({
+        type: "image",
+        prompt,
+        model: model || "jimeng",
+        results: { taskId, status: "pending" },
+        userId,
+      });
+
       return NextResponse.json({
         success: true,
         data: { taskId },

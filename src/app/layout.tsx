@@ -1,8 +1,32 @@
 import type { Metadata, Viewport } from 'next';
+import { Inter, Noto_Serif_SC, JetBrains_Mono } from 'next/font/google';
 import { Inspector } from 'react-dev-inspector';
 import { ClientProviders } from '@/components/client-providers';
 import { GlobalErrorBoundary } from '@/components/global-error-boundary';
 import './globals.css';
+
+// 预加载字体，消除 FOUT 闪烁
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+  display: 'swap',
+  preload: true,
+});
+
+const notoSerifSC = Noto_Serif_SC({
+  subsets: ['latin'],
+  weight: ['300', '400', '500'],
+  variable: '--font-noto-serif',
+  display: 'swap',
+  preload: true,
+});
+
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains',
+  display: 'swap',
+  preload: true,
+});
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -51,8 +75,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="dark">
-      <body className="antialiased">
+    <html lang="zh-CN" className={`dark ${inter.variable} ${notoSerifSC.variable} ${jetBrainsMono.variable}`}>
+      <body className="font-sans antialiased">
         <ClientProviders>
           <GlobalErrorBoundary>
             <Inspector />

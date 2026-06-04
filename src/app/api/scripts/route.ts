@@ -102,21 +102,7 @@ export async function GET(request: Request) {
     total = res2.count || 0;
   }
   
-  if (error) {
-    console.error('查询剧本失败:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: `查询剧本失败: ${error.message}`,
-      data: [],
-      pagination: {
-        page,
-        pageSize,
-        total: 0,
-        totalPages: 0,
-        hasMore: false,
-      }
-    }, { status: 500 });
-  }
+  if (error) throw new Error(`查询剧本失败: ${error.message}`);
   
   // 返回分页结果
   return NextResponse.json({ 

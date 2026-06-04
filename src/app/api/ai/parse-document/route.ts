@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import mammoth from 'mammoth';
+import { getCurrentUser } from '@/lib/auth';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFParser = require('pdf2json');
+
+// 安全配置
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const ALLOWED_FORMATS = ['.txt', '.md', '.docx', '.doc', '.pdf'];
+const MAX_CONTENT_LENGTH = 500000; // 最大提取字符数
 
 function parsePdf(buffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -19,6 +25,12 @@ function parsePdf(buffer: Buffer): Promise<string> {
 
 export async function POST(request: NextRequest) {
   try {
+    // 权限校验
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: '未登录', code: 'UNAUTHORIZED' }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
@@ -26,7 +38,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '缺少文件' }, { status: 400 });
     }
 
+    // 文件大小限制
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json({ 
+        error: `文件过大，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB` 
+      }, { status: 400 });
+    }
+
     const fileName = file.name.toLowerCase();
+    
+    // 格式白名单检查
+    const ext = ALLOWED_FORMATS.find(fmt => fileName.endsWith(fmt));
+    if (!ext) {
+      return NextResponse.json({ 
+        error: `不支持的文件格式，仅支持: ${ALLOWED_FORMATS.join(' / ')}` 
+      }, { status: 400 });
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     let content = '';
@@ -46,7 +74,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '文件内容为空' }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, content: content.trim() });
+    // 内容长度限制，防止内存溢出
+    const trimmedContent = content.trim().slice(0, MAX_CONTENT_LENGTH);
+
+    return NextResponse.json({ success: true, content: trimmedContent });
   } catch (error) {
     console.error('文档解析失败:', error);
     return NextResponse.json({ error: '文档解析失败，请检查文件格式' }, { status: 500 });
