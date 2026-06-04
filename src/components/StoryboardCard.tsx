@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Download, Loader2, Sparkles, ImageIcon, X, Package, Film } from 'lucide-react';
+import { Download, Loader2, Sparkles, ImageIcon, X, Package, Film, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -61,6 +61,8 @@ export function StoryboardCard({
   
   // 预览切换状态：当图片和视频都存在时，用于切换显示
   const [previewMode, setPreviewMode] = useState<PreviewMode>('image');
+  // 提示词预览折叠
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
 
   const handleOptimizePrompt = async () => {
     setOptimizing(true);
@@ -760,6 +762,22 @@ export function StoryboardCard({
                   <Sparkles className="w-3 h-3" />
                   {optimizing ? '优化中...' : '优化提示词'}
                 </button>
+                {/* 提示词预览折叠 */}
+                <button
+                  onClick={() => setShowPromptPreview(!showPromptPreview)}
+                  className="w-full text-xs px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#888888] hover:text-white transition-colors flex items-center justify-center gap-1 mt-2"
+                >
+                  <Eye className="w-3 h-3" />
+                  {showPromptPreview ? '隐藏预览' : '提示词预览'}
+                </button>
+                {showPromptPreview && (
+                  <div className="mt-2 p-3 rounded-lg bg-[#0A0A0A] border border-[#333333]">
+                    <div className="text-xs text-[#888888] mb-1">当前提示词</div>
+                    <div className="text-xs text-[#0ABAB5] font-mono leading-relaxed whitespace-pre-wrap">
+                      {editablePrompt || '暂无提示词'}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <>

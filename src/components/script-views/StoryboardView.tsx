@@ -223,7 +223,7 @@ export default function StoryboardView({
           {!content?.trim() ? (
             <>
               <p className="text-[#F5F5F5] font-medium mb-2">剧本内容为空</p>
-              <p className="text-sm text-[#888888] mb-4">请先在左侧「剧本预览」页面输入或导入剧本内容</p>
+              <p className="text-sm text-[#888888] mb-4">请先在左侧「剧本编辑」页面输入或导入剧本内容</p>
               <Button 
                 variant="outline" 
                 size="sm" 
