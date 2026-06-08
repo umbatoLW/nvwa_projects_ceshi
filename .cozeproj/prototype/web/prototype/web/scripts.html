@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start 导航组件，不需要的页面则不要复制此段 -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航（参考Vidu/LibLib） -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary" aria-current="page">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+      <!-- 页面标题与操作区 -->
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-on-surface">剧本库</h1>
+        <button id="btn-create-script" class="bg-primary text-on-primary px-4 py-2 rounded-sm text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>新建剧本
+        </button>
+      </div>
+
+      <!-- 搜索与筛选工具栏 -->
+      <div class="flex items-center gap-3 flex-wrap mb-6">
+        <!-- 搜索框 -->
+        <div class="relative flex-1 min-w-[200px] max-w-md">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"></i>
+          <input id="search-input" type="text" placeholder="搜索剧本标题..." class="w-full bg-surface-container border-none rounded-sm pl-9 pr-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors" />
+        </div>
+
+        <!-- 类型筛选 -->
+        <select id="filter-genre" class="bg-surface-container border-none rounded-sm px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors cursor-pointer">
+          <option value="">全部类型</option>
+          <option value="都市">都市</option>
+          <option value="古装">古装</option>
+          <option value="悬疑">悬疑</option>
+          <option value="甜宠">甜宠</option>
+          <option value="穿越">穿越</option>
+        </select>
+
+        <!-- 状态筛选 -->
+        <select id="filter-status" class="bg-surface-container border-none rounded-sm px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors cursor-pointer">
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option>
+          <option value="review">审核中</option>
+          <option value="completed">已完成</option>
+        </select>
+
+        <!-- 视图切换 -->
+        <div class="flex items-center bg-surface-container rounded-sm p-0.5">
+          <button id="view-grid" class="p-1.5 rounded-sm text-primary bg-surface-container-high transition-colors" aria-pressed="true">
+            <i data-lucide="layout-grid" class="w-4 h-4"></i>
+          </button>
+          <button id="view-list" class="p-1.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors" aria-pressed="false">
+            <i data-lucide="list" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 网格视图 -->
+      <div id="script-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <!-- 卡片-剧本1：错嫁豪门 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-001" data-genre="都市" data-status="completed">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">都市</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">错嫁豪门：总裁的替身新娘</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">一场意外的错嫁，将她卷入了豪门恩怨的漩涡。面对冷酷总裁的步步紧逼，她该如何守护自己的真心？</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>12,580 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-15
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本2：穿越之庶女逆袭记 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-002" data-genre="穿越" data-status="draft">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium" bg-purple-400/15 text-purple-400>穿越</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">穿越之庶女逆袭记</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">现代白领一朝穿越成古代庶女，凭借现代智慧与商业头脑，在波谲云诡的深宅大院中一步步逆袭上位。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>8,320 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-18
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本3：暗夜追踪 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-003" data-genre="悬疑" data-status="review">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">悬疑</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">审核中</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">暗夜追踪：消失的证人</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">一桩离奇命案的目击者突然人间蒸发，刑警队长在追查真相的过程中，发现案件背后隐藏着更大的阴谋。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>15,200 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-12
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本4：王爷的甜宠小娇妻 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-004" data-genre="甜宠" data-status="completed">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium" bg-pink-400/15 text-pink-400>甜宠</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">王爷的甜宠小娇妻</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">呆萌医女误入王爷府，用一手出神入化的医术和古灵精怪的个性，俘获了冷面王爷的芳心。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>9,860 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-10
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本5：凤仪天下 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-005" data-genre="古装" data-status="draft">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">古装</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">凤仪天下：宫斗风云</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">入宫为妃，步步为营。在尔虞我诈的后宫之中，她凭借智慧与谋略，从卑微答应一路晋升至母仪天下。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>20,150 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-08
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本6：重生之商业帝国 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-006" data-genre="都市" data-status="review">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">都市</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">审核中</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">重生之商业帝国</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">商界精英重生回到大学时代，凭借对未来趋势的精准预判，从零开始打造属于自己的商业传奇。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>18,400 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-05
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本7：古墓奇缘 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-007" data-genre="古装" data-status="completed">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">古装</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">古墓奇缘：千年之恋</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">考古系女生意外触碰古墓机关，穿越回千年之前，与一位神秘将军展开了一段跨越时空的生死之恋。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>11,200 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2025-01-03
+            </span>
+          </div>
+        </div>
+
+        <!-- 卡片-剧本8：密室逃脱 -->
+        <div class="script-card group bg-surface-container rounded-md p-4 cursor-pointer border border-transparent hover:border-primary transition-all" data-id="script-008" data-genre="悬疑" data-status="draft">
+          <div class="flex items-start justify-between mb-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">悬疑</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span>
+          </div>
+          <h3 class="text-base font-semibold text-on-surface mb-2 line-clamp-2">密室逃脱：死亡游戏</h3>
+          <p class="text-xs text-on-surface-variant mb-4 line-clamp-2">七名陌生人被困在神秘密室中，必须在规定时间内解开谜题才能存活。随着游戏进行，人性的阴暗面逐渐暴露。</p>
+          <div class="flex items-center justify-between text-xs text-on-surface-variant">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="type" class="w-3 h-3"></i>7,500 字
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>2024-12-28
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 列表视图（默认隐藏） -->
+      <div id="script-list" class="hidden bg-surface rounded-md shadow-card overflow-hidden">
+        <div class="grid grid-cols-12 px-4 py-3 bg-surface-container text-xs font-semibold text-on-surface-variant uppercase tracking-wide gap-4">
+          <span class="col-span-4">剧本标题</span>
+          <span class="col-span-2">类型</span>
+          <span class="col-span-2">状态</span>
+          <span class="col-span-2">字数</span>
+          <span class="col-span-2">创建时间</span>
+        </div>
+        <div class="divide-y divide-outline-variant/50">
+          <!-- 列表-剧本1 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-001" data-genre="都市" data-status="completed">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">错嫁豪门：总裁的替身新娘</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">都市</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">12,580 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-15</span>
+          </div>
+          <!-- 列表-剧本2 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-002" data-genre="穿越" data-status="draft">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">穿越之庶女逆袭记</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium" bg-purple-400/15 text-purple-400>穿越</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">8,320 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-18</span>
+          </div>
+          <!-- 列表-剧本3 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-003" data-genre="悬疑" data-status="review">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">暗夜追踪：消失的证人</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">悬疑</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">审核中</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">15,200 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-12</span>
+          </div>
+          <!-- 列表-剧本4 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-004" data-genre="甜宠" data-status="completed">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">王爷的甜宠小娇妻</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium" bg-pink-400/15 text-pink-400>甜宠</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">9,860 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-10</span>
+          </div>
+          <!-- 列表-剧本5 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-005" data-genre="古装" data-status="draft">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">凤仪天下：宫斗风云</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">古装</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">20,150 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-08</span>
+          </div>
+          <!-- 列表-剧本6 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-006" data-genre="都市" data-status="review">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">重生之商业帝国</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">都市</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">审核中</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">18,400 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-05</span>
+          </div>
+          <!-- 列表-剧本7 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-007" data-genre="古装" data-status="completed">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">古墓奇缘：千年之恋</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">古装</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">11,200 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2025-01-03</span>
+          </div>
+          <!-- 列表-剧本8 -->
+          <div class="script-list-item grid grid-cols-12 px-4 py-3 hover:bg-surface-container/50 transition-colors cursor-pointer gap-4 items-center" data-id="script-008" data-genre="悬疑" data-status="draft">
+            <span class="col-span-4 text-sm font-medium text-on-surface line-clamp-1">密室逃脱：死亡游戏</span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">悬疑</span></span>
+            <span class="col-span-2"><span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">草稿</span></span>
+            <span class="col-span-2 text-sm text-on-surface-variant">7,500 字</span>
+            <span class="col-span-2 text-sm text-on-surface-variant">2024-12-28</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分页器 -->
+      <div id="pagination" class="flex items-center justify-center gap-2 mt-8">
+        <button id="page-prev" class="px-3 py-1.5 rounded-sm bg-surface-container text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-40">
+          <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>
+        <button class="page-btn px-3 py-1.5 rounded-sm bg-primary text-on-primary text-sm font-medium" data-page="1">1</button>
+        <button class="page-btn px-3 py-1.5 rounded-sm bg-surface-container text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors" data-page="2">2</button>
+        <button class="page-btn px-3 py-1.5 rounded-sm bg-surface-container text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors" data-page="3">3</button>
+        <span class="text-on-surface-variant text-sm">...</span>
+        <button class="page-btn px-3 py-1.5 rounded-sm bg-surface-container text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors" data-page="10">10</button>
+        <button id="page-next" class="px-3 py-1.5 rounded-sm bg-surface-container text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
+          <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end 导航组件，不需要的页面则不要复制此段 -->
+
+  <script>
+    $(function() {
+      // 视图切换：网格视图
+      $('#view-grid').on('click', function() {
+        $(this).attr('aria-pressed', 'true').addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#view-list').attr('aria-pressed', 'false').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#script-grid').removeClass('hidden');
+        $('#script-list').addClass('hidden');
+      });
+
+      // 视图切换：列表视图
+      $('#view-list').on('click', function() {
+        $(this).attr('aria-pressed', 'true').addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#view-grid').attr('aria-pressed', 'false').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#script-list').removeClass('hidden');
+        $('#script-grid').addClass('hidden');
+      });
+
+      // 搜索与筛选过滤逻辑
+      function filterScripts() {
+        const keyword = $('#search-input').val().toLowerCase();
+        const genre = $('#filter-genre').val();
+        const status = $('#filter-status').val();
+
+        // 过滤网格卡片
+        $('.script-card').each(function() {
+          const title = $(this).find('h3').text().toLowerCase();
+          const desc = $(this).find('p').text().toLowerCase();
+          const cardGenre = $(this).data('genre');
+          const cardStatus = $(this).data('status');
+
+          const matchKeyword = !keyword || title.includes(keyword) || desc.includes(keyword);
+          const matchGenre = !genre || cardGenre === genre;
+          const matchStatus = !status || cardStatus === status;
+
+          $(this).toggle(matchKeyword && matchGenre && matchStatus);
+        });
+
+        // 同步过滤列表项
+        $('.script-list-item').each(function() {
+          const title = $(this).find('span:first').text().toLowerCase();
+          const cardGenre = $(this).data('genre');
+          const cardStatus = $(this).data('status');
+
+          const matchKeyword = !keyword || title.includes(keyword);
+          const matchGenre = !genre || cardGenre === genre;
+          const matchStatus = !status || cardStatus === status;
+
+          $(this).toggle(matchKeyword && matchGenre && matchStatus);
+        });
+      }
+
+      $('#search-input').on('input', filterScripts);
+      $('#filter-genre, #filter-status').on('change', filterScripts);
+
+      // 卡片点击跳转详情页
+      $('#script-grid').on('click', '.script-card', function() {
+        const id = $(this).data('id');
+        window.location.href = 'script-detail.html?id=' + id;
+      });
+
+      // 列表项点击跳转详情页
+      $('#script-list').on('click', '.script-list-item', function() {
+        const id = $(this).data('id');
+        window.location.href = 'script-detail.html?id=' + id;
+      });
+
+      // 新建剧本按钮
+      $('#btn-create-script').on('click', function() {
+        // 新建剧本 - 点击后应实现：
+        // 1. 打开新建剧本模态框或跳转至剧本创作页面
+        // 2. 提供输入方式选择：一句话创意 / 大纲 / 完整剧本 / 外部上传
+        // 3. 选择题材（都市/古装/悬疑等）、基调（轻松/紧张等）、目标时长
+        // 4. 配置AI模型选项（智谱GLM-4-Flash/DeepSeek-V3/GPT-4o）
+        // 5. 可选开启红线检测和AI优化功能
+        // 6. 点击生成后调用剧本生成服务，展示生成进度
+        console.log('打开新建剧本界面');
+      });
+
+      // 分页切换
+      $('.page-btn').on('click', function() {
+        const page = $(this).data('page');
+        // 分页切换 - 点击后应实现：
+        // 1. 移除当前页码的高亮样式（bg-primary text-on-primary）
+        // 2. 为点击的页码添加高亮样式
+        // 3. 根据页码参数请求对应数据，或切换预渲染的分页内容
+        // 4. 更新上一页/下一页按钮的禁用状态
+        // 5. 平滑滚动到页面顶部
+        console.log('切换到第', page, '页');
+      });
+
+      // 上一页
+      $('#page-prev').on('click', function() {
+        // 点击后应实现：
+        // 1. 获取当前页码，减1
+        // 2. 如果已经是第一页，则禁用该按钮
+        // 3. 否则更新分页状态并加载对应数据
+        console.log('上一页');
+      });
+
+      // 下一页
+      $('#page-next').on('click', function() {
+        // 点击后应实现：
+        // 1. 获取当前页码，加1
+        // 2. 如果已经是最后一页，则禁用该按钮
+        // 3. 否则更新分页状态并加载对应数据
+        console.log('下一页');
+      });
+    });
+  </script>
+
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>

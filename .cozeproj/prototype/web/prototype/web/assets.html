@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary_container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start 导航组件，不需要的页面则不要复制此段 -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航（参考Vidu/LibLib） -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-primary bg-primary/10" aria-current="page">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-dots p-6">
+      <!-- 页面标题栏 -->
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-on-surface">资产库</h1>
+        <div id="view-toggle" class="flex items-center bg-surface-container rounded-lg p-1 gap-0.5">
+          <button id="btn-grid-view" class="p-1.5 rounded-md text-primary bg-surface-container-high transition-colors" aria-label="网格视图">
+            <i data-lucide="layout-grid" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-list-view" class="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface transition-colors" aria-label="列表视图">
+            <i data-lucide="list" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 分类Tab -->
+      <div class="flex items-center gap-1 border-b border-outline-variant/20 mb-5 overflow-x-auto">
+        <button id="tab-all" class="tab-btn px-4 py-2.5 text-sm font-medium text-primary border-b-2 border-primary transition-colors whitespace-nowrap" data-tab="all">全部</button>
+        <button id="tab-character" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="character">角色</button>
+        <button id="tab-prop" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="prop">道具</button>
+        <button id="tab-scene" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="scene">场景</button>
+        <button id="tab-image" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="image">图片</button>
+        <button id="tab-video" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="video">视频</button>
+        <button id="tab-audio" class="tab-btn px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors whitespace-nowrap" data-tab="audio">音频</button>
+      </div>
+
+      <!-- 搜索+上传 -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex-1 relative">
+          <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-on-surface-variant"></i>
+          <input id="search-input" type="text" class="w-full bg-surface-container border-none rounded-md pl-10 pr-3 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all" placeholder="搜索资产名称、标签...">
+        </div>
+        <button id="btn-upload" class="bg-primary text-on-primary px-4 py-2.5 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2 shrink-0">
+          <i data-lucide="upload" class="w-4 h-4"></i>上传资产
+        </button>
+      </div>
+
+      <!-- 标签云 -->
+      <div class="flex flex-wrap items-center gap-2 mb-6">
+        <span class="text-xs text-on-surface-variant mr-1">热门标签：</span>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="都市">都市</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="古风">古风</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="悬疑">悬疑</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="甜宠">甜宠</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="玄幻">玄幻</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="科幻">科幻</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="复仇">复仇</button>
+        <button class="tag-btn px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors" data-tag="穿越">穿越</button>
+      </div>
+
+      <!-- 资产卡片容器 -->
+      <div id="asset-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <!-- 列表-资产1：林雨晴 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="character" data-tags="都市,甜宠" data-name="林雨晴">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=300&fit=crop" alt="都市女性角色林雨晴" data-category="人物" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">林雨晴</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">角色</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>2.4 MB</span>
+              <span>2024-03-15</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产2：青玉发簪 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="prop" data-tags="古风" data-name="青玉发簪">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1516962215378-7fa2e137ae93?w=400&h=300&fit=crop" alt="古风青玉发簪道具" data-category="服饰时尚" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">青玉发簪</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">道具</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>856 KB</span>
+              <span>2024-03-14</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产3：废弃医院走廊 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="scene" data-tags="悬疑" data-name="废弃医院走廊">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&h=300&fit=crop" alt="悬疑风格废弃医院走廊场景" data-category="建筑城市" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">废弃医院走廊</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">场景</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>4.2 MB</span>
+              <span>2024-03-12</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产4：甜蜜邂逅海报 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="image" data-tags="甜宠,都市" data-name="甜蜜邂逅海报">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400&h=300&fit=crop" alt="甜宠风格情侣海报图片" data-category="人物" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">甜蜜邂逅海报</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">图片</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>1.8 MB</span>
+              <span>2024-03-10</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产5：雨夜街道 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="video" data-tags="都市" data-name="雨夜街道">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=400&h=300&fit=crop" alt="都市雨夜街道视频素材" data-category="建筑城市" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
+              <i data-lucide="play-circle" class="w-10 h-10 text-white/80"></i>
+            </div>
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">雨夜街道</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error">视频</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>28.6 MB · 15s</span>
+              <span>2024-03-08</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产6：古筝配乐 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="audio" data-tags="古风" data-name="古筝配乐">
+          <div class="relative aspect-[4/3] overflow-hidden bg-surface-container-high flex items-center justify-center">
+            <img src="https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=400&h=300&fit=crop" alt="古风古筝音乐封面" data-category="艺术" class="w-full h-full object-cover opacity-60">
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <i data-lucide="music" class="w-10 h-10 text-white/60"></i>
+            </div>
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">古筝配乐</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-container-high text-on-surface-variant">音频</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>4.5 MB · 2:30</span>
+              <span>2024-03-05</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产7：苏婉柔 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="character" data-tags="古风" data-name="苏婉柔">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=300&fit=crop" alt="古风女性角色苏婉柔" data-category="人物" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">苏婉柔</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">角色</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>3.1 MB</span>
+              <span>2024-03-01</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表-资产8：都市夜景天台 -->
+        <div class="asset-card group relative bg-surface-container rounded-xl overflow-hidden shadow-card hover:shadow-float transition-all" data-type="scene" data-tags="都市" data-name="都市夜景天台">
+          <div class="relative aspect-[4/3] overflow-hidden">
+            <img src="https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=400&h=300&fit=crop" alt="都市夜景天台场景素材" data-category="建筑城市" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+            <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+              <button class="btn-preview bg-primary/90 text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary transition-colors">预览</button>
+              <button class="btn-use bg-surface-container-high/90 text-on-surface px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-highest transition-colors">使用</button>
+            </div>
+          </div>
+          <div class="p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <h3 class="text-sm font-semibold text-on-surface truncate">都市夜景天台</h3>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">场景</span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>5.3 MB</span>
+              <span>2024-02-28</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 空状态 -->
+      <div id="empty-state" class="hidden flex-col items-center justify-center py-20">
+        <i data-lucide="image-off" class="w-12 h-12 text-on-surface-variant/30 mb-3"></i>
+        <p class="text-sm text-on-surface-variant">未找到匹配的资产</p>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end 导航组件，不需要的页面则不要复制此段 -->
+
+  <script>
+    $(function() {
+      // Tab切换
+      $('.tab-btn').on('click', function() {
+        $('.tab-btn').removeClass('text-primary border-primary').addClass('text-on-surface-variant border-transparent');
+        $(this).removeClass('text-on-surface-variant border-transparent').addClass('text-primary border-primary');
+        filterAssets();
+      });
+
+      // 标签筛选
+      $('.tag-btn').on('click', function() {
+        $(this).toggleClass('bg-primary text-on-primary bg-surface-container text-on-surface-variant');
+        filterAssets();
+      });
+
+      // 搜索过滤
+      $('#search-input').on('input', function() {
+        filterAssets();
+      });
+
+      // 视图切换
+      $('#btn-grid-view').on('click', function() {
+        $(this).addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#btn-list-view').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#asset-container').removeClass('grid-cols-1 gap-3').addClass('grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4');
+      });
+
+      $('#btn-list-view').on('click', function() {
+        $(this).addClass('text-primary bg-surface-container-high').removeClass('text-on-surface-variant');
+        $('#btn-grid-view').removeClass('text-primary bg-surface-container-high').addClass('text-on-surface-variant');
+        $('#asset-container').removeClass('grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4').addClass('grid-cols-1 gap-3');
+      });
+
+      // 预览按钮
+      $('#asset-container').on('click', '.btn-preview', function() {
+        const name = $(this).closest('.asset-card').data('name');
+        console.log('预览资产:', name);
+      });
+
+      // 使用按钮
+      $('#asset-container').on('click', '.btn-use', function() {
+        const name = $(this).closest('.asset-card').data('name');
+        console.log('使用资产:', name);
+      });
+
+      // 上传按钮
+      $('#btn-upload').on('click', function() {
+        // 上传资产功能：
+        // 1. 打开文件选择对话框，支持多选图片/视频/音频文件
+        // 2. 选择后显示上传进度列表
+        // 3. 上传完成后自动提取文件信息（名称、大小、类型）
+        // 4. 弹出编辑弹窗，允许补充标签、描述、分类等信息
+        // 5. 确认后保存到资产库并刷新列表
+        console.log('打开上传资产对话框');
+      });
+
+      // 过滤函数
+      function filterAssets() {
+        const activeTab = $('.tab-btn.text-primary').data('tab');
+        const activeTags = $('.tag-btn.bg-primary').map(function() { return $(this).data('tag'); }).get();
+        const searchText = $('#search-input').val().toLowerCase().trim();
+        
+        let visibleCount = 0;
+        
+        $('.asset-card').each(function() {
+          const $card = $(this);
+          const type = $card.data('type');
+          const tags = ($card.data('tags') || '').split(',');
+          const name = ($card.data('name') || '').toLowerCase();
+          
+          const tabMatch = activeTab === 'all' || type === activeTab;
+          const tagMatch = activeTags.length === 0 || activeTags.some(tag => tags.includes(tag));
+          const searchMatch = !searchText || name.includes(searchText);
+          
+          if (tabMatch && tagMatch && searchMatch) {
+            $card.show();
+            visibleCount++;
+          } else {
+            $card.hide();
+          }
+        });
+        
+        if (visibleCount === 0) {
+          $('#empty-state').removeClass('hidden').addClass('flex');
+        } else {
+          $('#empty-state').addClass('hidden').removeClass('flex');
+        }
+      }
+    });
+  </script>
+  
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>

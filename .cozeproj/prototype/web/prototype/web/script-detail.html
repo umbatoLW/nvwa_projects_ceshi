@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色（科技蓝，参考Vidu/LibLib） === */
+      --color-primary:              #0ABAB5;
+      --color-primary-container:    #4DD4CF;
+      --color-on-primary:           #FFFFFF;
+      /* === 背景 / 表面（深色专业工具风） === */
+      --color-background:                 #0A0A0A;
+      --color-surface-container-lowest:   #0F0F0F;
+      --color-surface:                    #141414;
+      --color-surface-container:          #1A1A1A;
+      --color-surface-container-high:     #222222;
+      --color-surface-container-highest:  #2A2A2A;
+      /* === 文字 === */
+      --color-on-surface:           #F5F5F5;
+      --color-on-surface-variant:   #888888;
+      /* === 功能色 === */
+      --color-success:  #22C55E;
+      --color-error:    #EF4444;
+      --color-warning:  #F59E0B;
+      --color-info:     #33CCCC;
+      /* === 边框 === */
+      --color-outline:          #333333;
+      --color-outline-variant:  #262626;
+      /* === 圆角 === */
+      --radius-sm:   0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.25rem;
+      --radius-2xl:  1.5rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 2px 8px rgba(0,0,0,0.4);
+      --shadow-float:  0 8px 24px rgba(0,0,0,0.5);
+      --shadow-dialog: 0 20px 50px rgba(0,0,0,0.6);
+      /* === 字体 === */
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+
+  <!-- 网点纹理背景 -->
+  <style>
+    .bg-dots {
+      background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23141414"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central" fill="%233B82F6">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%23888888" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start -->
+  <!-- 顶部极简Header -->
+  <header class="fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b border-outline-variant/30 bg-background/95">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-on-primary"></i>
+      </div>
+      <span class="font-bold text-base tracking-tight">NVWA</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors">
+        <i data-lucide="bell" class="w-4 h-4 text-on-surface-variant"></i>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface text-xs font-medium">初</div>
+    </div>
+  </header>
+
+  <div class="flex pt-14" style="height: 100vh;">
+    <!-- 左侧垂直导航（参考Vidu/LibLib） -->
+    <aside class="w-56 shrink-0 border-r border-outline-variant/30 bg-surface overflow-y-auto">
+      <div class="p-2 space-y-0.5">
+        <a href="dashboard.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          仪表盘
+        </a>
+        <a href="workspace.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="workflow" class="w-4 h-4"></i>
+          工作区
+        </a>
+        <a href="scripts.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors bg-primary/10 text-primary" aria-current="page">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          剧本库
+        </a>
+        <a href="characters.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          角色库
+        </a>
+        <a href="assets.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+          <i data-lucide="image" class="w-4 h-4"></i>
+          资产库
+        </a>
+        <div class="pt-3 mt-3 border-t border-outline-variant/30 space-y-0.5">
+          <a href="settings.html" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-on-surface-variant hover:bg-surface-container hover:text-on-surface">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            设置
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- @main-content:start -->
+    <main class="flex-1 min-w-0 flex flex-col bg-dots" style="height: calc(100vh - 3.5rem);">
+      <!-- 顶部操作栏 -->
+      <div id="top-action-bar" class="h-14 shrink-0 flex items-center justify-between px-6 border-b border-outline-variant/20 bg-surface/80 backdrop-blur-sm">
+        <div class="flex items-center gap-4">
+          <a href="scripts.html" id="btn-back" class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors text-on-surface-variant">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-on-surface-variant">剧本库 /</span>
+            <h1 class="text-lg font-bold text-on-surface">月光下的救赎</h1>
+          </div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button id="btn-edit" class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors text-on-surface-variant" title="编辑">
+            <i data-lucide="pencil" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-export" class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors text-on-surface-variant" title="导出">
+            <i data-lucide="download" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-delete" class="w-8 h-8 rounded-md flex items-center justify-center hover:bg-surface-container transition-colors text-on-surface-variant" title="删除">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 左右分栏主体 -->
+      <div class="flex flex-1 overflow-hidden">
+        <!-- 左侧信息面板 -->
+        <aside class="w-[280px] shrink-0 border-r border-outline-variant/20 bg-surface overflow-y-auto">
+          <div class="p-5 space-y-6">
+            <!-- 剧本标题与标签 -->
+            <div>
+              <h2 class="text-xl font-bold text-on-surface leading-tight">月光下的救赎</h2>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">都市甜宠</span>
+                <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span>
+              </div>
+            </div>
+
+            <!-- 元信息 -->
+            <div class="space-y-3">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-on-surface-variant">创建时间</span>
+                <span class="text-sm text-on-surface">2025-01-15</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-on-surface-variant">字数</span>
+                <span class="text-sm text-on-surface">12,580字</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-on-surface-variant">场景数</span>
+                <span class="text-sm text-on-surface">8场</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-on-surface-variant">预计时长</span>
+                <span class="text-sm text-on-surface">12分钟</span>
+              </div>
+            </div>
+
+            <!-- 分割线 -->
+            <div class="h-px bg-outline-variant/30"></div>
+
+            <!-- 简介 -->
+            <div>
+              <h3 class="text-sm font-semibold text-on-surface mb-2">剧本简介</h3>
+              <p class="text-sm text-on-surface-variant leading-relaxed">
+                富家千金林夕在意外失忆后，被普通外卖员顾城所救。两人在相处中渐生情愫，但林夕的未婚夫和家族势力不断阻挠。当林夕恢复记忆，她必须在家族利益与真爱之间做出选择。最终，两人在月光下重逢，完成了一场关于救赎与勇气的爱情故事。
+              </p>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 右侧主内容区 -->
+        <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <!-- Tab切换栏 -->
+          <div class="h-11 shrink-0 flex items-center px-6 border-b border-outline-variant/20 bg-surface/50">
+            <div class="flex items-center gap-6 h-full">
+              <button id="tab-script" class="tab-btn h-full text-sm font-medium text-primary border-b-2 border-primary transition-colors" data-tab="script-content">剧本正文</button>
+              <button id="tab-storyboard" class="tab-btn h-full text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors" data-tab="storyboard-content">分镜表格</button>
+              <button id="tab-characters" class="tab-btn h-full text-sm font-medium text-on-surface-variant hover:text-on-surface border-b-2 border-transparent transition-colors" data-tab="characters-content">角色列表</button>
+            </div>
+          </div>
+
+          <!-- Tab内容区 -->
+          <div id="tab-contents" class="flex-1 overflow-y-auto p-6">
+            <!-- 剧本正文 -->
+            <div id="script-content" class="tab-panel space-y-6">
+              <!-- 场景1-雨夜邂逅 -->
+              <div class="bg-surface rounded-lg shadow-card p-5">
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-primary/15 text-primary text-xs font-bold">1</span>
+                  <div>
+                    <h3 class="text-base font-semibold text-on-surface">雨夜邂逅</h3>
+                    <p class="text-xs text-on-surface-variant mt-0.5">城市街头 · 雨夜</p>
+                  </div>
+                </div>
+                <div class="space-y-3 text-sm text-on-surface-variant leading-relaxed">
+                  <p><span class="text-on-surface font-medium">林夕：</span>（踉跄着走在雨中，头部有血迹）不要...不要过来...</p>
+                  <p><span class="text-on-surface font-medium">动作描述：</span>一辆黑色轿车疾驰而过，溅起的水花打湿了她的白色连衣裙。林夕惊恐地后退，脚下一滑，重重摔倒在地。</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>（骑着电动车经过，急刹车）喂！你没事吧？这大半夜的，你怎么一个人在这儿？</p>
+                  <p><span class="text-on-surface font-medium">林夕：</span>（抬起头，眼神迷茫）我...我是谁？</p>
+                  <p><span class="text-on-surface font-medium">动作描述：</span>顾城愣住，看着眼前这个满身泥泞却气质不凡的女孩，雨水顺着她的脸颊滑落。</p>
+                </div>
+              </div>
+
+              <!-- 场景2-出租屋里的温暖 -->
+              <div class="bg-surface rounded-lg shadow-card p-5">
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-primary/15 text-primary text-xs font-bold">2</span>
+                  <div>
+                    <h3 class="text-base font-semibold text-on-surface">出租屋里的温暖</h3>
+                    <p class="text-xs text-on-surface-variant mt-0.5">顾城出租屋 · 凌晨</p>
+                  </div>
+                </div>
+                <div class="space-y-3 text-sm text-on-surface-variant leading-relaxed">
+                  <p><span class="text-on-surface font-medium">动作描述：</span>狭小的出租屋里，顾城用毛巾轻轻擦拭林夕脸上的泥水。屋内只有一张床和一个旧沙发。</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>你先穿这个，我的T恤，虽然大了点...你别嫌弃啊。</p>
+                  <p><span class="text-on-surface font-medium">林夕：</span>（抓着衣角，小声）谢谢你。我真的什么都不记得了...</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>（挠头）那...你先住这儿吧。我睡沙发，你睡床。等天亮了，我带你去找警察。</p>
+                  <p><span class="text-on-surface font-medium">动作描述：</span>林夕点点头，眼中闪过一丝依赖。顾城转身走向沙发，却没有看见林夕嘴角微微上扬。</p>
+                </div>
+              </div>
+
+              <!-- 场景3-心动瞬间 -->
+              <div class="bg-surface rounded-lg shadow-card p-5">
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-primary/15 text-primary text-xs font-bold">3</span>
+                  <div>
+                    <h3 class="text-base font-semibold text-on-surface">心动瞬间</h3>
+                    <p class="text-xs text-on-surface-variant mt-0.5">小餐馆 · 傍晚</p>
+                  </div>
+                </div>
+                <div class="space-y-3 text-sm text-on-surface-variant leading-relaxed">
+                  <p><span class="text-on-surface font-medium">动作描述：</span>顾城系着围裙在厨房忙碌，林夕坐在窗边，夕阳将她的侧脸染成金色。</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>（端着两碗面走出）来，尝尝我的拿手好菜——红烧牛肉面！</p>
+                  <p><span class="text-on-surface font-medium">林夕：</span>（尝了一口，眼睛亮起来）好吃！比我以前吃过的任何东西都好吃！</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>（看着她吃得开心，自己也笑了）那你以后就天天来我这儿吃。</p>
+                  <p><span class="text-on-surface font-medium">动作描述：</span>两人相视而笑，空气中弥漫着暧昧的气息。窗外，城市的灯火逐渐亮起。</p>
+                </div>
+              </div>
+
+              <!-- 场景4-真相浮现 -->
+              <div class="bg-surface rounded-lg shadow-card p-5">
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-primary/15 text-primary text-xs font-bold">4</span>
+                  <div>
+                    <h3 class="text-base font-semibold text-on-surface">真相浮现</h3>
+                    <p class="text-xs text-on-surface-variant mt-0.5">医院走廊 · 白天</p>
+                  </div>
+                </div>
+                <div class="space-y-3 text-sm text-on-surface-variant leading-relaxed">
+                  <p><span class="text-on-surface font-medium">动作描述：</span>医生拿着检查报告走向顾城和林夕。林夕紧张地抓着顾城的手。</p>
+                  <p><span class="text-on-surface font-medium">医生：</span>林小姐的失忆是暂时性的，受到刺激后很可能恢复记忆。不过...</p>
+                  <p><span class="text-on-surface font-medium">顾城：</span>不过什么？</p>
+                  <p><span class="text-on-surface font-medium">医生：</span>恢复记忆后，她可能会忘记失忆期间的一切。这是大脑的自我保护机制。</p>
+                  <p><span class="text-on-surface font-medium">动作描述：</span>顾城脸色苍白，看向林夕。林夕也看着他，眼中满是不舍。</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 分镜表格 -->
+            <div id="storyboard-content" class="tab-panel hidden">
+              <div class="bg-surface rounded-lg shadow-card overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left">
+                    <thead>
+                      <tr class="bg-[#222222] text-xs font-semibold text-on-surface-variant uppercase tracking-wide">
+                        <th class="px-4 py-3 w-14">镜号</th>
+                        <th class="px-4 py-3 w-16">时长</th>
+                        <th class="px-4 py-3 min-w-[200px]">画面描述</th>
+                        <th class="px-4 py-3 w-24">角色</th>
+                        <th class="px-4 py-3 w-20">景别</th>
+                        <th class="px-4 py-3 w-24">运镜</th>
+                        <th class="px-4 py-3 w-28">音效</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/30 text-sm">
+                      <!-- 分镜1 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">01</td>
+                        <td class="px-4 py-3 text-on-surface-variant">8s</td>
+                        <td class="px-4 py-3 text-on-surface">雨夜街头，霓虹灯倒影在积水中，林夕跌跌撞撞走在雨中</td>
+                        <td class="px-4 py-3 text-on-surface-variant">林夕</td>
+                        <td class="px-4 py-3 text-on-surface-variant">全景</td>
+                        <td class="px-4 py-3 text-on-surface-variant">跟拍</td>
+                        <td class="px-4 py-3 text-on-surface-variant">雨声、雷声</td>
+                      </tr>
+                      <!-- 分镜2 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">02</td>
+                        <td class="px-4 py-3 text-on-surface-variant">5s</td>
+                        <td class="px-4 py-3 text-on-surface">黑色轿车疾驰而过，水花飞溅，林夕惊恐后退</td>
+                        <td class="px-4 py-3 text-on-surface-variant">林夕</td>
+                        <td class="px-4 py-3 text-on-surface-variant">中景</td>
+                        <td class="px-4 py-3 text-on-surface-variant">推镜</td>
+                        <td class="px-4 py-3 text-on-surface-variant">引擎声、水花声</td>
+                      </tr>
+                      <!-- 分镜3 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">03</td>
+                        <td class="px-4 py-3 text-on-surface-variant">6s</td>
+                        <td class="px-4 py-3 text-on-surface">林夕摔倒在地，白色连衣裙沾满泥水，眼神绝望</td>
+                        <td class="px-4 py-3 text-on-surface-variant">林夕</td>
+                        <td class="px-4 py-3 text-on-surface-variant">近景</td>
+                        <td class="px-4 py-3 text-on-surface-variant">俯拍</td>
+                        <td class="px-4 py-3 text-on-surface-variant">雨声渐弱</td>
+                      </tr>
+                      <!-- 分镜4 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">04</td>
+                        <td class="px-4 py-3 text-on-surface-variant">7s</td>
+                        <td class="px-4 py-3 text-on-surface">顾城骑着电动车出现，急刹车，雨水顺着他的安全帽流下</td>
+                        <td class="px-4 py-3 text-on-surface-variant">顾城</td>
+                        <td class="px-4 py-3 text-on-surface-variant">中景</td>
+                        <td class="px-4 py-3 text-on-surface-variant">横移</td>
+                        <td class="px-4 py-3 text-on-surface-variant">刹车声</td>
+                      </tr>
+                      <!-- 分镜5 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">05</td>
+                        <td class="px-4 py-3 text-on-surface-variant">10s</td>
+                        <td class="px-4 py-3 text-on-surface">顾城蹲下，关切地看着林夕。林夕抬头，两人对视，画面定格</td>
+                        <td class="px-4 py-3 text-on-surface-variant">林夕/顾城</td>
+                        <td class="px-4 py-3 text-on-surface-variant">特写</td>
+                        <td class="px-4 py-3 text-on-surface-variant">环绕</td>
+                        <td class="px-4 py-3 text-on-surface-variant">心跳声、雨声</td>
+                      </tr>
+                      <!-- 分镜6 -->
+                      <tr class="hover:bg-surface-container/30 transition-colors">
+                        <td class="px-4 py-3 text-on-surface font-medium">06</td>
+                        <td class="px-4 py-3 text-on-surface-variant">4s</td>
+                        <td class="px-4 py-3 text-on-surface">出租屋内部，陈旧但整洁，一盏暖黄的台灯</td>
+                        <td class="px-4 py-3 text-on-surface-variant">-</td>
+                        <td class="px-4 py-3 text-on-surface-variant">全景</td>
+                        <td class="px-4 py-3 text-on-surface-variant">固定</td>
+                        <td class="px-4 py-3 text-on-surface-variant">柔和钢琴曲</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- 角色列表 -->
+            <div id="characters-content" class="tab-panel hidden">
+              <div class="grid grid-cols-2 gap-4">
+                <!-- 角色1-林夕 -->
+                <div class="bg-surface rounded-lg shadow-card p-5">
+                  <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-full bg-primary/15 flex items-center justify-center text-primary text-lg font-bold shrink-0">林</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between">
+                        <h3 class="text-base font-semibold text-on-surface">林夕</h3>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-primary/15 text-primary">女主</span>
+                      </div>
+                      <p class="text-xs text-on-surface-variant mt-1">富家千金，22岁，性格倔强但内心柔软</p>
+                      <div class="mt-3 space-y-1.5">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">外貌</span>
+                          <span class="text-xs text-on-surface">长发及腰，杏眼，身材纤细</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">服装</span>
+                          <span class="text-xs text-on-surface">前期白色连衣裙，后期红色礼服</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">特征</span>
+                          <span class="text-xs text-on-surface">左手腕有月牙形胎记</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 角色2-顾城 -->
+                <div class="bg-surface rounded-lg shadow-card p-5">
+                  <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-full bg-success/15 flex items-center justify-center text-success text-lg font-bold shrink-0">顾</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between">
+                        <h3 class="text-base font-semibold text-on-surface">顾城</h3>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">男主</span>
+                      </div>
+                      <p class="text-xs text-on-surface-variant mt-1">外卖员，25岁，善良正直，有音乐梦想</p>
+                      <div class="mt-3 space-y-1.5">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">外貌</span>
+                          <span class="text-xs text-on-surface">短发，五官端正，小麦肤色</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">服装</span>
+                          <span class="text-xs text-on-surface">蓝色外卖服，黑色运动鞋</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">特征</span>
+                          <span class="text-xs text-on-surface">右肩有旧伤疤，弹吉他时眼神温柔</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 角色3-陈昊 -->
+                <div class="bg-surface rounded-lg shadow-card p-5">
+                  <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-full bg-warning/15 flex items-center justify-center text-warning text-lg font-bold shrink-0">陈</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between">
+                        <h3 class="text-base font-semibold text-on-surface">陈昊</h3>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning">反派</span>
+                      </div>
+                      <p class="text-xs text-on-surface-variant mt-1">林夕未婚夫，28岁，商界精英，控制欲强</p>
+                      <div class="mt-3 space-y-1.5">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">外貌</span>
+                          <span class="text-xs text-on-surface">西装革履，金丝眼镜，神情冷峻</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">服装</span>
+                          <span class="text-xs text-on-surface">高级定制西装，百达翡丽手表</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">特征</span>
+                          <span class="text-xs text-on-surface">说话时习惯转动手上的戒指</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 角色4-苏婉 -->
+                <div class="bg-surface rounded-lg shadow-card p-5">
+                  <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-full bg-info/15 flex items-center justify-center text-info text-lg font-bold shrink-0">苏</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between">
+                        <h3 class="text-base font-semibold text-on-surface">苏婉</h3>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-info/15 text-info">闺蜜</span>
+                      </div>
+                      <p class="text-xs text-on-surface-variant mt-1">林夕闺蜜，24岁，时尚博主，性格直爽</p>
+                      <div class="mt-3 space-y-1.5">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">外貌</span>
+                          <span class="text-xs text-on-surface">齐肩短发，妆容精致，气质时尚</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">服装</span>
+                          <span class="text-xs text-on-surface">潮流混搭，色彩鲜艳</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs text-on-surface-variant w-12">特征</span>
+                          <span class="text-xs text-on-surface">说话快，习惯性撩头发</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部固定操作栏 -->
+      <div class="h-14 shrink-0 flex items-center justify-end px-6 border-t border-outline-variant/20 bg-surface gap-3">
+        <button id="btn-redline-check" class="bg-surface-container text-on-surface border-none px-4 py-2 rounded-md text-sm font-medium hover:bg-surface-container-high active:scale-[0.98] transition-all inline-flex items-center gap-2">
+          <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+          红线检测
+        </button>
+        <button id="btn-ai-optimize" class="bg-primary text-on-primary px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+          AI优化
+        </button>
+      </div>
+    </main>
+    <!-- @main-content:end -->
+  </div>
+  <!-- @nav:end -->
+
+  <script>
+    $(function() {
+      // Tab切换
+      $('.tab-btn').on('click', function() {
+        const target = $(this).data('tab');
+
+        // 切换按钮样式
+        $('.tab-btn').removeClass('text-primary border-primary').addClass('text-on-surface-variant border-transparent');
+        $(this).removeClass('text-on-surface-variant border-transparent').addClass('text-primary border-primary');
+
+        // 切换内容
+        $('.tab-panel').addClass('hidden');
+        $('#' + target).removeClass('hidden');
+      });
+
+      // 编辑按钮 - 点击后应进入剧本编辑模式：
+      // 1. 剧本标题变为可编辑的input输入框，自动聚焦
+      // 2. 剧本正文变为富文本编辑区域（contenteditable或富文本编辑器）
+      // 3. 左侧简介变为textarea可编辑
+      // 4. 顶部操作栏出现"保存"和"取消"按钮，隐藏编辑/导出/删除
+      // 5. 保存时调用 PUT /api/script/:id 更新剧本内容
+      // 6. 取消时恢复原始内容，退出编辑模式
+      $('#btn-edit').on('click', function() {
+        console.log('进入剧本编辑模式');
+      });
+
+      // 导出按钮 - 点击后应弹出导出选项：
+      // 1. 弹出模态框，提供格式选择（PDF / Word / TXT / 剧本专用格式）
+      // 2. 用户选择格式后，前端生成对应文件并提供下载
+      // 3. 可选：导出时包含/不包含分镜信息、角色信息
+      $('#btn-export').on('click', function() {
+        console.log('导出剧本');
+      });
+
+      // 删除按钮 - 点击后删除剧本：
+      // 1. 弹出二次确认对话框，提示"此操作不可撤销"
+      // 2. 确认后调用 DELETE /api/script/:id
+      // 3. 删除成功后跳转回剧本库列表页 scripts.html
+      $('#btn-delete').on('click', function() {
+        if (confirm('确定要删除这个剧本吗？此操作不可撤销。')) {
+          console.log('删除剧本');
+          window.location.href = 'scripts.html';
+        }
+      });
+
+      // AI优化按钮 - 点击后调用AI优化：
+      // 1. 显示优化选项弹窗（润色对白 / 丰富情节 / 调整节奏 / 优化标题）
+      // 2. 用户选择优化维度后，调用 POST /api/script/generate with enableOptimization
+      // 3. 展示优化前后的对比视图（左右分栏或diff高亮）
+      // 4. 用户确认后替换原剧本内容，或一键撤销
+      $('#btn-ai-optimize').on('click', function() {
+        console.log('调用AI优化剧本');
+      });
+
+      // 红线检测按钮 - 点击后执行内容安全检测：
+      // 1. 显示检测进度loading动画（扫描中...）
+      // 2. 调用 POST /api/script/check 接入阿里云内容安全API
+      // 3. 展示检测结果面板：政治敏感 / 暴力血腥 / 低俗色情 / 违禁物品 / 版权问题 各维度评分
+      // 4. 标记问题片段并高亮显示，提供修改建议
+      // 5. 生成合规报告，可导出PDF
+      $('#btn-redline-check').on('click', function() {
+        console.log('调用红线检测');
+      });
+    });
+  </script>
+
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>
