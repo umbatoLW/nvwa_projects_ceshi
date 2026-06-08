@@ -24,6 +24,11 @@ export function useAIStream(streamId?: string) {
   // 组件卸载时自动清理
   useEffect(() => {
     return () => {
+      // 【修复】强制应用最后一批待更新状态，防止数据丢失
+      if (Object.keys(pendingUpdateRef.current).length > 0) {
+        setStream(id, pendingUpdateRef.current);
+        pendingUpdateRef.current = {};
+      }
       // 清理abort
       if (abortRef.current) {
         abortRef.current.abort();
@@ -35,7 +40,7 @@ export function useAIStream(streamId?: string) {
       // 移除流状态
       removeStream(id);
     };
-  }, [id, removeStream]);
+  }, [id, removeStream, setStream]);
 
   // 批量更新函数，合并高频更新，约60fps
   const batchUpdate = useCallback((updates: Partial<AIStreamState>) => {

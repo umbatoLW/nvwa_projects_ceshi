@@ -1,15 +1,20 @@
 /**
  * 短剧创作知识库
- * 来源：short-drama 开源项目（github.com/0xsline/short-drama）
  * 用途：为LLM System Prompt注入专业创作方法论
  */
+
+// 导入知识库模块
+import { characterConsistency, longScriptGuide } from './character-consistency';
+import { logicConsistencyGuide } from './logic-consistency';
+import { commonPitfalls, commonPitfallsSummary } from './common-pitfalls';
+import { OPENING_KNOWLEDGE, OPENING_TEMPLATES, recommendOpening } from './opening-rules';
 
 export const KNOWLEDGE_BASE = {
   /**
    * 题材指南（13种）
    * 每种题材的核心要素、标志性桥段、节奏模板
    */
-  genreGuide: `## 题材指南（13种核心题材）
+  genreGuide: `## 题材指南（15种核心题材）
 
 【霸道总裁】
 核心要素：权力不对等、契约关系、身份反转、追妻火葬场
@@ -67,7 +72,19 @@ export const KNOWLEDGE_BASE = {
 
 【军事】
 核心要素：训练、任务、战友情、牺牲、荣誉
-标志性桥段：入伍→训练→任务→牺牲→荣誉`,
+标志性桥段：入伍→训练→任务→牺牲→荣誉
+
+【红色】
+核心要素：英雄事迹、时代精神、牺牲奉献、家国情怀、榜样力量
+标志性桥段：危难时刻挺身而出→平凡岗位创造不凡→遭受误解仍坚守初心→获得认可与致敬→精神传承
+节奏模板：时代背景铺垫→人物面临抉择→克服艰难困苦→取得成就/牺牲→社会反响→精神延续
+
+【文旅】
+核心要素：地标建筑、历史传说、民俗风情、自然奇观、文化体验
+标志性桥段：游客初临震撼→本地人讲述故事→沉浸式体验→意外发现秘境→文化共鸣→离别留恋
+节奏模板：风景引入→人物邂逅→故事展开→矛盾/探险→解决问题→留下记忆/宣传推广`,
+
+
 
   /**
    * 四段式节奏曲线
@@ -155,6 +172,7 @@ export const KNOWLEDGE_BASE = {
 60集剧本：约6-9个卡点
 80集剧本：约8-12个卡点
 100集剧本：约10-15个卡点
+120集剧本：约12-18个卡点
 
 【卡点位置选择（按转化率排序）】
 1. 情绪阈值最高点（转化率最高，35-40%）
@@ -223,12 +241,24 @@ export const KNOWLEDGE_BASE = {
 配比建议：温情类30%，医疗类25%
 关键节拍：苦难（3集铺垫）→善意（2集展现）→牺牲（1集高潮）→回报（2集收尾）
 
+【红色：楷模光辉】
+适用题材：红色/励志/家庭
+配比建议：红色类35-40%，励志类25-30%，感动类20-25%，燃类10-15%
+关键节拍：苦难（铺垫3集）→奋斗（8集过程）→成就（2集高潮）→致敬（2集收尾）
+
+【文旅：文化共鸣】
+适用题材：文旅/温情/轻喜剧
+配比建议：文旅类30-35%，感动类20-25%，搞笑类15-20%，甜宠类10-15%，其他10%
+关键节拍：美景展示（每集开篇）→文化体验（5集融入）→情感联结（3集高潮）→回味传播（2集收尾）
+
 【不同题材爽感配比参考】
 甜宠类：甜宠40% + 虐心20% + 打脸15% + 搞笑15% + 其他10%
 逆袭类：逆袭35% + 打脸30% + 燃20% + 悬疑10% + 其他5%
 悬疑类：悬疑40% + 反转25% + 打脸15% + 燃10% + 其他10%
 总裁类：打脸25% + 甜宠25% + 虐心20% + 逆袭15% + 其他15%
-古风类：虐心25% + 逆袭20% + 甜宠20% + 打脸15% + 悬疑10% + 其他10%`,
+古风类：虐心25% + 逆袭20% + 甜宠20% + 打脸15% + 悬疑10% + 其他10%
+红色类：感动35% + 燃30% + 逆袭20% + 打脸10% + 其他5%
+文旅类：感动30% + 搞笑25% + 甜宠20% + 燃10% + 悬疑5% + 其他10%`,
 
   /**
    * 四层反派递进体系
@@ -350,62 +380,50 @@ export const KNOWLEDGE_BASE = {
 4. 历史题材必须标注"本故事纯属虚构"`,
 
   /**
-   * 开篇黄金30秒（前3集结构公式）
+   * 人物一致性知识库
+   * 确保长剧本中人物外观、行为、语言风格的持续一致性
    */
-  openingRules: `## 开篇黄金30秒（前3集结构公式）
+  characterConsistency,
 
-【第1集：钩子开场 + 世界观建立 + 核心人物登场 + 首集结尾悬念】
-开场3秒：必须有强钩子（冲突/悬念/情绪/动作/对话）
-前30秒：观众必须知道：主角是谁、核心冲突是什么、故事发生在哪
-第1-3分钟：核心人物全部登场（主角+第一层反派+关键配角）
-第3-5分钟：核心矛盾抛出（为什么这个故事值得看100集）
-结尾：强钩子（必须是5种钩子中最强的：情绪/危机/反转）
+  /**
+   * 长剧本续写指南
+   * 80-120集长剧本的特殊处理方法
+   */
+  longScriptGuide,
 
-【第2集：冲突升级 + 人物关系展开 + 首次小高潮 + 结尾留钩子】
-开场：承接第1集结尾钩子（3秒内给出回应）
-中段：冲突升级（第一层反派加码/新人物登场增加复杂度）
-高潮：首次小高潮（小打脸/小反转/小危机）
-结尾：新钩子（与第1集不同类型，避免疲劳）
-
-【第3集：首次反转 + 核心矛盾明确 + 付费卡点（如适用）】
-开场：承接第2集钩子
-中段：首次反转（颠覆观众对前2集的认知，但不要太早揭露隐藏反派）
-高潮：核心矛盾明确（观众清楚知道：主角要达成什么目标，阻碍是什么）
-结尾：如果是付费模式，第3集可作为第一个付费卡点（此时用户已建立粘性）
-
-【5种开场模式】
-
-1. 冲突开场（最常用，适合90%题材）
-示例："离婚吧！"（女主把离婚协议拍在桌上，男主冷笑"你确定？"）
-适用：总裁/家庭/复仇/职场
-效果：立即建立冲突，观众想知道为什么
-
-2. 悬念开场（适合悬疑/推理/玄幻）
-示例：一个神秘包裹放在门口，打开后是一枚20年前的戒指...
-适用：悬疑/推理/穿越/重生
-效果：好奇心立即被调动
-
-3. 情绪开场（适合虐恋/温情/励志）
-示例：女主跪在雨中，手里攥着病危通知书，泪水混着雨水流下...
-适用：虐恋/医疗/家庭/励志
-效果：情感共鸣，观众同情主角
-
-4. 动作开场（适合动作/军事/玄幻）
-示例：女主从高楼一跃而下，身后是爆炸的火光...
-适用：动作/军事/玄幻/悬疑
-效果：肾上腺素飙升，紧张感拉满
-
-5. 对话开场（适合喜剧/职场/家庭）
-示例："我怀孕了。" "谁的？" "你的。" "不可能，我是gay。"
-适用：喜剧/职场/家庭/轻喜剧
-效果：金句记忆点，轻松有趣
-
-【开场禁忌】
-1. 前30秒没有冲突/悬念/情绪（观众划走）
-2. 人物太多前3集登场（观众记不住）
-3. 世界观解释太长（观众不耐烦）
-4. 开场与后续剧情脱节（观众感觉被骗）
-5. 前3集节奏太平（观众没有追下去的动力）`
+  /**
+   * 逻辑一致性知识库
+   * 确保角色认知、剧情事实的前后一致，避免逻辑矛盾
+   */
+  logicConsistencyGuide,
+  
+  /**
+   * 常见错误集知识库（强制参考）
+   * 收集短剧创作中的常见逻辑错误、认知错误、常识错误等
+   * AI 在生成时必须主动避免这些错误
+   */
+  commonPitfalls,
+  
+  /**
+   * 开篇规则知识库（从 Short Drama 整合）
+   * 6种标准开场模板 + 开篇黄金法则
+   */
+  openingRules: OPENING_KNOWLEDGE,
+  
+  /**
+   * 开篇模板知识库（从 Short Drama 整合）
+   */
+  openingKnowledge: OPENING_KNOWLEDGE,
+  
+  /**
+   * 开篇模板列表
+   */
+  openingTemplates: OPENING_TEMPLATES,
+  
+  /**
+   * 开篇推荐函数
+   */
+  recommendOpening,
 } as const;
 
 export type KnowledgeKey = keyof typeof KNOWLEDGE_BASE;
@@ -413,37 +431,55 @@ export type KnowledgeKey = keyof typeof KNOWLEDGE_BASE;
 /**
  * 按需加载知识库
  * 不同任务只加载相关文档，避免超出LLM上下文窗口
+ * @param task 任务类型
+ * @param maxLength 最大字符长度限制（默认 15000，约 7500 tokens）
  */
-export function loadKnowledgeForTask(task: string): string {
+export function loadKnowledgeForTask(task: string, maxLength: number = 15000): string {
   const mapping: Record<string, KnowledgeKey[]> = {
-    'script-generate': ['genreGuide', 'rhythmCurve', 'openingRules'],
-    'character-design': ['villainDesign', 'genreGuide'],
-    'outline-create': ['rhythmCurve', 'hookDesign', 'paywallDesign', 'villainDesign'],
-    'episode-write': ['openingRules', 'hookDesign', 'satisfactionMatrix', 'rhythmCurve'],
-    'script-review': ['rhythmCurve', 'hookDesign', 'satisfactionMatrix', 'complianceChecklist'],
-    'compliance-check': ['complianceChecklist'],
-    'paywall-design': ['paywallDesign', 'rhythmCurve', 'hookDesign'],
-    'villain-design': ['villainDesign', 'genreGuide'],
+    // script-generate: 核心对话生成，需要题材指南、节奏曲线、开篇规则、常见错误规避
+    'script-generate': ['genreGuide', 'rhythmCurve', 'openingRules', 'commonPitfalls'],
+    'character-design': ['villainDesign', 'genreGuide', 'commonPitfalls'],
+    // outline-create: 大纲生成，需要节奏、钩子、付费卡点、反派、逻辑一致性、常见错误规避
+    'outline-create': ['rhythmCurve', 'hookDesign', 'paywallDesign', 'villainDesign', 'logicConsistencyGuide', 'commonPitfalls'],
+    // episode-write: 逐集撰写，需要人物一致性、长剧本指南、逻辑一致性、常见错误规避
+    'episode-write': ['openingRules', 'hookDesign', 'satisfactionMatrix', 'rhythmCurve', 'characterConsistency', 'longScriptGuide', 'logicConsistencyGuide', 'commonPitfalls'],
+    'script-review': ['rhythmCurve', 'hookDesign', 'satisfactionMatrix', 'complianceChecklist', 'commonPitfalls'],
+    'compliance-check': ['complianceChecklist', 'commonPitfalls'],
+    'paywall-design': ['paywallDesign', 'rhythmCurve', 'hookDesign', 'commonPitfalls'],
+    'villain-design': ['villainDesign', 'genreGuide', 'commonPitfalls'],
+    // continue-writing: 续写任务，需要人物一致性、长剧本指南、逻辑一致性、常见错误规避
+    'continue-writing': ['characterConsistency', 'longScriptGuide', 'rhythmCurve', 'hookDesign', 'logicConsistencyGuide', 'commonPitfalls'],
   };
 
   const keys = mapping[task] || [];
   if (keys.length === 0) {
-    // 默认加载核心知识
+    // 默认加载核心知识 + 常见错误规避
     return [
       KNOWLEDGE_BASE.genreGuide,
       KNOWLEDGE_BASE.rhythmCurve,
       KNOWLEDGE_BASE.hookDesign,
-    ].join('\n\n');
+      KNOWLEDGE_BASE.commonPitfalls,
+    ].filter(v => typeof v === 'string').join('\n\n');
   }
 
-  return keys.map(k => KNOWLEDGE_BASE[k]).join('\n\n');
+  const values = keys.map(k => KNOWLEDGE_BASE[k]).filter(v => typeof v === 'string');
+  const result = values.join('\n\n');
+  
+  // 【修复】如果超出长度限制，智能裁剪（保留每个知识库的前半部分）
+  if (result.length > maxLength) {
+    const perKnowledge = Math.floor(maxLength / values.length);
+    return values.map(v => v.slice(0, perKnowledge)).join('\n\n');
+  }
+  
+  return result;
 }
 
 /**
  * 获取单份知识库（用于特定场景）
  */
 export function getKnowledge(key: KnowledgeKey): string {
-  return KNOWLEDGE_BASE[key];
+  const value = KNOWLEDGE_BASE[key];
+  return typeof value === 'string' ? value : '';
 }
 
 /**
@@ -451,6 +487,7 @@ export function getKnowledge(key: KnowledgeKey): string {
  */
 export function estimateKnowledgeTokens(task: string): number {
   const knowledge = loadKnowledgeForTask(task);
+  if (typeof knowledge !== 'string') return 0;
   // 粗略估算：1个中文字符≈1.5 tokens，1个英文字符≈0.5 tokens
   const chineseChars = (knowledge.match(/[\u4e00-\u9fa5]/g) || []).length;
   const otherChars = knowledge.length - chineseChars;

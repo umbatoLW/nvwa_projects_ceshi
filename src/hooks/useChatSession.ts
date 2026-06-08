@@ -35,7 +35,7 @@ const WELCOME_MESSAGE: ChatMessage = {
 
 export function useChatSession(scriptId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
-  const [currentModel, setCurrentModel] = useState("qwen-plus");
+  const [currentModel, setCurrentModel] = useState("deepseek-v4-pro");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -135,12 +135,21 @@ export function useChatSession(scriptId: string) {
         abortRef.current = new AbortController();
 
         // 构建对话历史（排除欢迎消息）
-        const conversationHistory = newMessages
+        // 【修复】限制对话历史长度，防止超出 Token 限制
+        const MAX_HISTORY_CHARS = 8000; // 约 4000 tokens
+        let conversationHistory = newMessages
           .filter((m) => m.id !== "welcome")
           .map((m) => ({
             role: m.role,
             content: m.content,
           }));
+        
+        // 如果历史过长，从旧到新截断
+        let totalChars = conversationHistory.reduce((sum, m) => sum + m.content.length, 0);
+        while (totalChars > MAX_HISTORY_CHARS && conversationHistory.length > 1) {
+          const removed = conversationHistory.shift();
+          totalChars -= removed?.content.length || 0;
+        }
 
         const res = await fetch("/api/ai/chat", {
           method: "POST",

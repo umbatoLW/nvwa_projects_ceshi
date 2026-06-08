@@ -575,7 +575,7 @@ export function getMaxOutputCount(modelId: string): number {
 }
 
 // ===== Default Values =====
-export const DEFAULT_LLM_MODEL = "qwen-plus";
+export const DEFAULT_LLM_MODEL = "deepseek-v4-pro";
 export const DEFAULT_IMAGE_MODEL = "wan2.7-image-pro";
 export const DEFAULT_VIDEO_MODEL = "seedance2";
 export const DEFAULT_3D_MODEL = "Tripo/Tripo-H3.1";
