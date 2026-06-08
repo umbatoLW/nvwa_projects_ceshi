@@ -1,0 +1,193 @@
+/* NVWA 女娲平台 - 设计规范主题文件 */
+/* 毛玻璃风格 + 极光渐变 + 深色科技 */
+
+@layer base {
+  :root {
+    /* 背景 */
+    --nvwa-bg: #070A14;
+    --nvwa-bg-elevated: #0D1117;
+
+    /* 玻璃拟态表面 */
+    --nvwa-surface: rgba(255, 255, 255, 0.06);
+    --nvwa-surface-hover: rgba(255, 255, 255, 0.10);
+    --nvwa-surface-active: rgba(255, 255, 255, 0.14);
+
+    /* 主色 */
+    --nvwa-primary: #7C5CFF;
+    --nvwa-primary-hover: #9374FF;
+    --nvwa-primary-muted: rgba(124, 92, 255, 0.15);
+
+    /* 强调色 */
+    --nvwa-accent: #69E7FF;
+    --nvwa-accent-hover: #8AEDFF;
+    --nvwa-accent-muted: rgba(105, 231, 255, 0.15);
+
+    /* 功能色 */
+    --nvwa-success: #62FAD3;
+    --nvwa-warning: #F5A623;
+    --nvwa-error: #FF6B6B;
+
+    /* 文本 */
+    --nvwa-text: #F7FAFF;
+    --nvwa-text-secondary: #9AA7C7;
+    --nvwa-text-muted: #6B7280;
+
+    /* 边框 */
+    --nvwa-border: rgba(255, 255, 255, 0.08);
+    --nvwa-border-hover: rgba(255, 255, 255, 0.12);
+
+    /* 阴影/发光 */
+    --nvwa-glow-primary: 0 0 20px rgba(124, 92, 255, 0.4);
+    --nvwa-glow-primary-strong: 0 0 30px rgba(124, 92, 255, 0.6), 0 0 60px rgba(124, 92, 255, 0.2);
+    --nvwa-glow-accent: 0 0 20px rgba(105, 231, 255, 0.4);
+    --nvwa-shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --nvwa-shadow-card-hover: 0 12px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+    /* 圆角 */
+    --nvwa-radius: 16px;
+    --nvwa-radius-sm: 12px;
+    --nvwa-radius-lg: 20px;
+  }
+}
+
+@layer components {
+  /* 极光渐变背景 */
+  .aurora-bg {
+    background: 
+      radial-gradient(ellipse at 20% 20%, rgba(124, 92, 255, 0.12) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 80%, rgba(105, 231, 255, 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 50%, rgba(124, 92, 255, 0.05) 0%, transparent 70%),
+      var(--nvwa-bg);
+    min-height: 100vh;
+  }
+
+  /* 玻璃拟态卡片 */
+  .glass-card {
+    background: var(--nvwa-surface);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--nvwa-border);
+    border-radius: var(--nvwa-radius);
+    box-shadow: var(--nvwa-shadow-card);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card:hover {
+    background: var(--nvwa-surface-hover);
+    border-color: var(--nvwa-border-hover);
+    box-shadow: var(--nvwa-shadow-card-hover);
+  }
+
+  /* 玻璃面板（导航栏/侧边栏） */
+  .glass-panel {
+    background: rgba(7, 10, 20, 0.8);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border-right: 1px solid var(--nvwa-border);
+  }
+
+  /* 发光按钮 */
+  .glow-button {
+    background: linear-gradient(135deg, var(--nvwa-primary) 0%, var(--nvwa-accent) 100%);
+    color: var(--nvwa-text);
+    border: none;
+    box-shadow: var(--nvwa-glow-primary);
+    transition: all 0.3s ease;
+  }
+
+  .glow-button:hover {
+    box-shadow: var(--nvwa-glow-primary-strong);
+    transform: translateY(-2px);
+  }
+
+  .glow-button:active {
+    transform: translateY(0);
+  }
+
+  /* 渐变文字 */
+  .gradient-text {
+    background: linear-gradient(135deg, var(--nvwa-primary) 0%, var(--nvwa-accent) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* 状态标签 */
+  .status-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .status-badge-draft {
+    background: rgba(136, 136, 136, 0.2);
+    color: #888;
+  }
+
+  .status-badge-reviewing {
+    background: rgba(245, 158, 11, 0.2);
+    color: #F5A623;
+  }
+
+  .status-badge-completed {
+    background: rgba(98, 250, 211, 0.2);
+    color: #62FAD3;
+  }
+
+  /* 输入框 */
+  .glass-input {
+    background: var(--nvwa-surface);
+    border: 1px solid var(--nvwa-border);
+    border-radius: var(--nvwa-radius-sm);
+    color: var(--nvwa-text);
+    transition: all 0.2s ease;
+  }
+
+  .glass-input:focus {
+    outline: none;
+    border-color: var(--nvwa-primary);
+    box-shadow: 0 0 0 3px var(--nvwa-primary-muted);
+  }
+
+  .glass-input::placeholder {
+    color: var(--nvwa-text-muted);
+  }
+
+  /* 加载动画 */
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .float-animation {
+    animation: float 5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* 滚动条 */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
