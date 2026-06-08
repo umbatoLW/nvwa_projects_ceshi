@@ -16,6 +16,14 @@ import {
   Shield,
   RefreshCw,
 } from 'lucide-react';
+import {
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  ResponsiveContainer,
+} from 'recharts';
 
 // 五维度定义
 const DIMENSIONS = [
@@ -89,6 +97,8 @@ interface NormalizedResult {
   dimensions: DimensionScore[];
   overallGrade: 'A' | 'B' | 'C' | 'D' | 'F';
   summary: string;
+  modelVersion?: string;
+  scoredAt?: string;
 }
 
 interface FiveDimensionScoreCardProps {
@@ -143,6 +153,8 @@ export function FiveDimensionScoreCard({
       dimensions: normalizedDimensions,
       overallGrade: calculateGrade(apiResult.overallScore),
       summary: apiResult.summary || '',
+      modelVersion: 'qwen-plus',
+      scoredAt: new Date().toISOString(),
     };
   };
 
@@ -272,6 +284,31 @@ export function FiveDimensionScoreCard({
                 </div>
               </div>
 
+              {/* 五维度雷达图 */}
+              <div className="p-4 bg-[#1A1A1A] rounded-lg border border-[#333]">
+                <div className="text-sm text-gray-400 mb-2">五维度雷达图</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <RadarChart data={result.dimensions.map(d => ({
+                    subject: d.name,
+                    score: d.score,
+                    fullMark: d.maxScore,
+                  }))}>
+                    <PolarGrid stroke="rgba(255,255,255,0.1)" />
+                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#9AA7C7', fontSize: 12 }} />
+                    <PolarRadiusAxis angle={30} domain={[0, 20]} tick={false} axisLine={false} />
+                    <Radar name="评分" dataKey="score" stroke="#7C5CFF" fill="#7C5CFF" fillOpacity={0.3} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* 评分来源标识 */}
+              <div className="flex items-center justify-end gap-2 text-xs text-[#9AA7C7]">
+                <Sparkles className="w-3 h-3" />
+                <span>{result.modelVersion || 'qwen-plus'}</span>
+                <span className="text-[#666]">·</span>
+                <span>{result.scoredAt ? new Date(result.scoredAt).toLocaleString() : '刚刚'}</span>
+              </div>
+
               {/* 总体评价 */}
               <p className="text-sm text-gray-300 italic">{result.summary}</p>
 
@@ -364,13 +401,27 @@ export function FiveDimensionScoreCard({
               </div>
             </>
           ) : (
-            /* 空状态 */
-            <div className="text-center py-8 text-gray-500">
-              <Gauge className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>点击&quot;开始评分&quot;分析剧本质量</p>
-              <p className="text-xs mt-1">
-                将从节奏、钩子、人物、爽感、合规五个维度评分
+            /* 空状态 - 增强版 */
+            <div className="text-center py-10">
+              <div className="w-20 h-20 rounded-full bg-[#7C5CFF]/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
+                <Sparkles className="w-10 h-10 text-[#7C5CFF]" />
+              </div>
+              <h3 className="text-lg font-medium text-foreground mb-2">剧本质量评分</h3>
+              <p className="text-[#9AA7C7] text-sm mb-4 max-w-xs mx-auto">
+                从节奏把控、钩子设计、人物塑造、爽感密度、合规安全五个维度深度分析
               </p>
+              <Button
+                className="bg-gradient-to-r from-[#7C5CFF] to-[#69E7FF] text-white shadow-lg shadow-[#7C5CFF]/20 hover:shadow-[#7C5CFF]/40 transition-all"
+                onClick={runReview}
+                disabled={isLoading || !scriptContent.trim()}
+              >
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Sparkles className="w-4 h-4 mr-2" />
+                )}
+                {isLoading ? '分析中...' : '开始评分'}
+              </Button>
             </div>
           )}
         </CardContent>

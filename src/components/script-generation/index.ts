@@ -2,4 +2,5 @@
 
 export { ThreeStageProgress } from './ThreeStageProgress';
 export { FiveDimensionScoreCard } from './FiveDimensionScoreCard';
+export { ScoreView } from './ScoreView';
 export { ScriptContentRenderer, highlightScriptTags } from './ScriptContentRenderer';

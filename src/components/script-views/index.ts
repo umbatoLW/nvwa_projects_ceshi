@@ -6,3 +6,5 @@ export { default as CostumesView } from "./CostumesView";
 export { default as ScenesView } from "./ScenesView";
 export { default as PropsView } from "./PropsView";
 export { default as RedlineView } from "./RedlineView";
+export { AssetLibraryView, ASSET_TYPES } from "./AssetLibraryView";
+export type { AssetType, AssetTypeConfig } from "./AssetLibraryView";

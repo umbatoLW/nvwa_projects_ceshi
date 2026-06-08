@@ -7,129 +7,23 @@ import {
   Film, 
   MessageSquare, 
   Sparkles,
-  Heart,
-  Zap,
-  Flame,
-  Target,
-  Star,
-  ChevronDown,
-  ChevronRight,
-  Lock,
   Quote,
   User,
   Layers,
+  Target,
+  Lock,
 } from 'lucide-react';
-
-// 剧本JSON数据结构
-interface ScriptJsonData {
-  title?: string;
-  genre?: string;
-  logline?: string;
-  mainCharacters?: Character[];
-  villains?: Villain[];
-  episodes?: Episode[];
-  coreDialogues?: CoreDialogue[];
-  keyLines?: string[];
-}
-
-interface Character {
-  name: string;
-  role?: string;
-  description?: string;
-  arc?: string;
-}
-
-interface Villain {
-  layer?: number;
-  name: string;
-  role?: string;
-  motivation?: string;
-  defeatEpisode?: number;
-}
-
-interface Episode {
-  episode: number;
-  title?: string;
-  summary?: string;
-  emotionBeat?: string;
-  hookType?: string;
-  isPaywall?: boolean;
-  content?: string;
-}
-
-interface CoreDialogue {
-  episode: number;
-  scene: string;
-  dialogue: string;
-  emotion?: string;
-}
-
-// 情绪标签颜色映射
-const EMOTION_COLORS: Record<string, string> = {
-  悬: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  燃: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  爽: 'bg-green-500/20 text-green-400 border-green-500/30',
-  甜: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
-  暖: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  虐: 'bg-red-500/20 text-red-400 border-red-500/30',
-  default: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
-};
-
-// 情绪图标映射
-const EMOTION_ICONS: Record<string, React.ElementType> = {
-  悬: Target,
-  燃: Flame,
-  爽: Zap,
-  甜: Heart,
-  暖: Sparkles,
-  虐: Star,
-  default: Sparkles,
-};
-
-// 折叠面板组件
-function CollapsibleSection({ 
-  title, 
-  icon: Icon, 
-  defaultOpen = false,
-  badge,
-  children 
-}: { 
-  title: string; 
-  icon: React.ElementType; 
-  defaultOpen?: boolean;
-  badge?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  
-  return (
-    <div className="border border-[#333] rounded-xl overflow-hidden bg-[#141414]/50 backdrop-blur-sm">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-4 hover:bg-[#1A1A1A]/50 transition-colors"
-        aria-expanded={isOpen}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#0ABAB5]/20 flex items-center justify-center">
-            <Icon className="w-4 h-4 text-[#0ABAB5]" />
-          </div>
-          <span className="text-sm font-medium text-[#F5F5F5]">{title}</span>
-          {badge}
-        </div>
-        {isOpen ? (
-          <ChevronDown className="w-5 h-5 text-[#888]" />
-        ) : (
-          <ChevronRight className="w-5 h-5 text-[#888]" />
-        )}
-      </button>
-      {isOpen && (
-        <div className="p-4 pt-0 border-t border-[#333]/50">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
+import {
+  ScriptJsonData,
+  Character,
+  Villain,
+  Episode,
+  CoreDialogue,
+  CollapsibleSection,
+  getEmotionColor,
+  getEmotionIcon,
+  PaywallBadge,
+} from './renderers';
 
 // 解析JSON内容
 function parseScriptContent(content: string): ScriptJsonData | null {
@@ -174,7 +68,7 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
           <p className="text-sm text-[#888] mt-1">AI正在创作中，请稍候</p>
         </div>
         {/* 显示已生成的部分内容预览 */}
-        <div className="w-full max-w-2xl mt-4 p-4 bg-[#141414] rounded-xl border border-[#333]">
+        <div className="w-full max-w-2xl mt-4 p-4 bg-[#141414] rounded-xl">
           <p className="text-xs text-[#888] mb-2">已生成内容预览：</p>
           <div className="text-sm text-[#F5F5F5]/80 font-mono whitespace-pre-wrap line-clamp-6">
             {content.slice(0, 500)}...
@@ -202,7 +96,7 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
     <div className="space-y-4">
       {/* 剧名 + 类型 - Hero区域 */}
       {data.title && (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#0ABAB5]/10 via-[#141414] to-[#7C5CFF]/10 p-6 border border-[#333]">
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#0ABAB5]/10 via-[#141414] to-[#7C5CFF]/10 p-6">
           {/* 装饰性背景 */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-[#0ABAB5]/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
           <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#7C5CFF]/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
@@ -231,7 +125,7 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
       
       {/* 故事简介 - Logline */}
       {data.logline && (
-        <div className="p-4 rounded-xl bg-[#141414]/50 border border-[#333] backdrop-blur-sm">
+        <div className="p-4 rounded-xl bg-[#141414]/50 backdrop-blur-sm">
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 rounded-lg bg-[#7C5CFF]/20 flex items-center justify-center shrink-0 mt-0.5">
               <Quote className="w-4 h-4 text-[#7C5CFF]" />
@@ -276,7 +170,7 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
             {data.mainCharacters.map((char, i) => (
               <div 
                 key={i}
-                className="p-4 rounded-xl bg-[#1A1A1A]/50 border border-[#333]/50 hover:border-[#0ABAB5]/30 transition-colors"
+                className="p-4 rounded-xl bg-[#1A1A1A]/50 hover:bg-[#1A1A1A]/70 transition-colors"
               >
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#0ABAB5]/30 to-[#7C5CFF]/30 flex items-center justify-center shrink-0">
@@ -351,8 +245,8 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
         >
           <div className="space-y-3 pt-4">
             {data.coreDialogues.map((d, i) => {
-              const EmotionIcon = EMOTION_ICONS[d.emotion || ''] || EMOTION_ICONS.default;
-              const emotionColor = EMOTION_COLORS[d.emotion || ''] || EMOTION_COLORS.default;
+              const EmotionIcon = getEmotionIcon(d.emotion || '');
+              const emotionColor = getEmotionColor(d.emotion || '');
               
               return (
                 <div 
@@ -390,7 +284,6 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
               {Object.keys(emotionStats).length > 0 && (
                 <div className="flex items-center gap-1">
                   {Object.entries(emotionStats).slice(0, 3).map(([emotion, count]) => {
-                    const EmotionIcon = EMOTION_ICONS[emotion] || EMOTION_ICONS.default;
                     return (
                       <span key={emotion} className="text-xs text-[#666]">
                         {count}
@@ -405,8 +298,8 @@ export function ScriptJsonRenderer({ content, onEpisodeClick }: ScriptJsonRender
         >
           <div className="space-y-2 pt-4">
             {data.episodes.map((ep, i) => {
-              const EmotionIcon = EMOTION_ICONS[ep.emotionBeat || ''] || EMOTION_ICONS.default;
-              const emotionColor = EMOTION_COLORS[ep.emotionBeat || ''] || EMOTION_COLORS.default;
+              const EmotionIcon = getEmotionIcon(ep.emotionBeat || '');
+              const emotionColor = getEmotionColor(ep.emotionBeat || '');
               
               return (
                 <div 

@@ -6,8 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import {
-  MessageSquare,
-  FileText,
   PenTool,
   CheckCircle2,
   Loader2,
@@ -15,56 +13,13 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
+import { cleanAiOutput, safeJsonParse, isScriptJson } from '@/lib/content/content-cleaner';
+import { ScriptJsonRenderer } from '@/components/script-views/ScriptJsonRenderer';
+import { STAGES } from './progress/config';
+import type { StageProgress, ThreeStageProgressProps } from './progress/types';
 
-// 三阶段定义
-const STAGES = [
-  {
-    id: 1,
-    name: '核心对话生成',
-    description: '生成每集核心场景对话、金句台词',
-    icon: MessageSquare,
-    color: 'text-cyan-400',
-    bgColor: 'bg-cyan-400/10',
-  },
-  {
-    id: 2,
-    name: '完整大纲生成',
-    description: '人物设定、四层反派、付费卡点标注',
-    icon: FileText,
-    color: 'text-purple-400',
-    bgColor: 'bg-purple-400/10',
-  },
-  {
-    id: 3,
-    name: '逐集撰写',
-    description: '注入知识库指导、钩子设计',
-    icon: PenTool,
-    color: 'text-orange-400',
-    bgColor: 'bg-orange-400/10',
-  },
-];
-
-export interface StageProgress {
-  stage: number;
-  name: string;
-  progress: number;
-  status: 'pending' | 'running' | 'completed' | 'error';
-  message?: string;
-}
-
-interface ThreeStageProgressProps {
-  // 自主模式：传入 idea，组件自己调用 API
-  idea?: string;
-  onComplete?: (result: unknown) => void;
-  onError?: (error: string) => void;
-  // 受控模式：外部控制进度状态
-  stages?: StageProgress[];
-  currentStage?: number;
-  isComplete?: boolean;
-  error?: string | null;
-  onRetry?: () => void;
-  onCancel?: () => void;
-}
+// 导出类型
+export type { StageProgress, ThreeStageProgressProps } from './progress/types';
 
 export function ThreeStageProgress({
   idea,
@@ -137,9 +92,10 @@ export function ThreeStageProgress({
             )
           );
         }
-        // 内容累积
+        // 内容累积（实时清洗JSON代码）
         if (data.content) {
-          setOutput((prev) => prev + data.content);
+          const cleanedContent = cleanAiOutput(data.content);
+          setOutput((prev) => prev + cleanedContent);
         }
       } else if (data.type === 'complete') {
         // 生成完成
@@ -404,15 +360,25 @@ export function ThreeStageProgress({
           })}
         </div>
 
-        {/* 输出预览 */}
+        {/* 输出预览 - 直接显示，无额外边框 */}
         {output && (
-          <div className="mt-4 p-4 bg-[#1A1A1A] rounded-lg border border-[#333]">
-            <h4 className="text-sm font-medium text-gray-400 mb-2">
-              生成内容预览
-            </h4>
-            <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-60">
-              {output}
-            </pre>
+          <div className="mt-4">
+            {(() => {
+              const cleaned = cleanAiOutput(output);
+              const parsed = safeJsonParse(cleaned);
+              if (parsed && isScriptJson(parsed)) {
+                return (
+                  <div className="overflow-auto custom-scrollbar">
+                    <ScriptJsonRenderer content={cleaned} />
+                  </div>
+                );
+              }
+              return (
+                <div className="text-sm text-nvwa-text whitespace-pre-wrap leading-relaxed p-4 bg-muted/30 rounded-lg">
+                  {cleaned}
+                </div>
+              );
+            })()}
           </div>
         )}
       </CardContent>

@@ -2,97 +2,17 @@
 
 import { useRef, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Loader2, Sparkles, Upload, Eye, EyeOff } from "lucide-react";
-import { ThreeStageProgress } from "@/components/script-generation";
-import { FiveDimensionScoreCard } from "@/components/script-generation";
+import { Loader2, Sparkles, Upload, Eye, EyeOff, Copy, Check, Trash2, Clapperboard } from "lucide-react";
 import { ScriptContentRenderer } from "@/components/script-generation";
 import { ScriptJsonRenderer, isJsonScriptContent } from "@/components/script-views/ScriptJsonRenderer";
-
-interface ScriptGenerationStage {
-  stage: number;
-  name: string;
-  output: string;
-  detail?: string;
-}
-
-interface ScriptEditorProps {
-  script: ScriptDetail | null;
-  editContent: string;
-  setEditContent: (v: string) => void;
-  aiGeneratedContent?: string;
-  contentVersion?: 'manual' | 'ai';
-  setContentVersion?: (v: 'manual' | 'ai') => void;
-  episodeContentMap: Record<number, string>;
-  setEpisodeContentMap: (v: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
-  activeEpisode: number;
-  setActiveEpisode: (v: number) => void;
-  isUploading: boolean;
-  uploadProgress: string;
-  analyzeProgress: string;
-  isGeneratingScript: boolean;
-  scriptIdea: string;
-  setScriptIdea: (v: string) => void;
-  targetEpisodes: number;
-  setTargetEpisodes: (v: number) => void;
-  generatedOutline: Record<string, unknown> | null;
-  onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onGenerateFullScript: () => void;
-  stageProgress?: ScriptGenerationStage | null;  // 三阶段进度（可选）
-}
-
-interface ScriptDetail {
-  id: string;
-  title: string;
-  content: string;
-  episodeCount?: number;
-  wordCount?: string | number;
-  sceneCount?: number;
-  status?: string;
-  type?: string;
-  tags?: string[];
-  synopsis?: string;
-  scenes?: ScriptScene[];
-  storyboards?: ScriptStoryboard[];
-  roles?: ScriptRole[];
-  coverImage?: string;
-  genre?: string;
-}
-
-interface ScriptScene {
-  num: number;
-  title: string;
-  location: string;
-  time: string;
-  content: string;
-}
-
-interface ScriptStoryboard {
-  num: number;
-  duration: string;
-  description: string;
-  character: string;
-  shot: string;
-  camera: string;
-  audio: string;
-}
-
-interface ScriptRole {
-  name: string;
-  tag: string;
-  description: string;
-  lines: number;
-  appearance: string;
-  costume: string;
-  feature: string;
-}
+import { ScrollToTopButton } from "@/components/ui/scroll-to-top-button";
+import type { ScriptEditorProps, ScriptDetail, ScriptGenerationStage } from "@/components/script-editor";
 
 export default function ScriptEditor({
   script,
   editContent,
   setEditContent,
-  aiGeneratedContent = '',
-  contentVersion = 'manual',
-  setContentVersion,
+  // 注意：aiGeneratedContent 相关 props 已移除，剧本编辑界面完全独立
   episodeContentMap,
   setEpisodeContentMap,
   activeEpisode,
@@ -100,18 +20,30 @@ export default function ScriptEditor({
   isUploading,
   uploadProgress,
   analyzeProgress,
-  isGeneratingScript,
-  scriptIdea,
-  setScriptIdea,
-  targetEpisodes,
-  setTargetEpisodes,
-  generatedOutline,
   onFileUpload,
-  onGenerateFullScript,
-  stageProgress,
+  onApplyToStoryboard,
 }: ScriptEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
   const [showPreview, setShowPreview] = useState(true);  // 默认预览模式，JSON格式时美观展示
+  const [copied, setCopied] = useState(false);  // 复制状态
+  const [showClearConfirm, setShowClearConfirm] = useState(false);  // 清空确认状态
+  const previewScrollRef = useRef<HTMLDivElement>(null);  // 预览滚动容器
+
+  // 清空编辑内容（只清空剧本编辑框，不影响创意生成的剧本输出）
+  const handleClearContent = useCallback(() => {
+    if (showClearConfirm) {
+      // 执行清空 - 只清空剧本编辑框内容，完全独立于创意生成界面
+      setEditContent('');
+      setEpisodeContentMap({});
+      setShowClearConfirm(false);
+    } else {
+      // 显示确认状态
+      setShowClearConfirm(true);
+      // 3秒后自动取消确认状态
+      setTimeout(() => setShowClearConfirm(false), 3000);
+    }
+  }, [showClearConfirm, setEditContent, setEpisodeContentMap]);
 
   // 单集内容更新
   const handleEpisodeContentChange = useCallback((episode: number, content: string) => {
@@ -152,7 +84,7 @@ export default function ScriptEditor({
         </div>
         <div className="flex items-center gap-2 text-xs text-[#888888]">
           <span>共 {script?.episodeCount || 1} 集</span>
-          {script?.episodeCount && script.episodeCount > 1 && (
+          {(script?.episodeCount ?? 1) > 1 && (
             <>
               <span className="text-[#0ABAB5]">|</span>
               <span>当前第 {activeEpisode} 集</span>
@@ -160,80 +92,10 @@ export default function ScriptEditor({
           )}
         </div>
       </div>
+      {/* 三阶段进度条 - 仅在创意生成界面显示，这里不显示 */}
       
-      {/* 剧本生成面板 - 仅当剧本为空时显示 */}
-      {!editContent?.trim() && (
-        <div className="mb-6 p-4 bg-[#141414] border border-[#333] rounded-xl">
-          <h3 className="text-sm font-ui mb-3 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#0ABAB5]" />
-            从创意生成剧本
-          </h3>
-          <textarea
-            className="w-full bg-[#1A1A1A] border border-[#333] rounded-lg p-3 text-sm mb-3 resize-none focus:outline-none focus:border-[#0ABAB5] font-body"
-            rows={4}
-            value={scriptIdea}
-            onChange={(e) => setScriptIdea(e.target.value)}
-            placeholder="输入你的剧本创意或大纲，例如：&#10;一个都市甜宠剧，讲述霸道总裁和普通女孩的爱情故事...&#10;男主是冷面总裁，女主是元气满满的咖啡店老板娘..."
-            disabled={isGeneratingScript}
-          />
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[#888]">目标集数：</span>
-              <input
-                type="number"
-                className="w-16 bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#0ABAB5]"
-                value={targetEpisodes}
-                onChange={(e) => setTargetEpisodes(Number(e.target.value))}
-                min={1}
-                max={100}
-                disabled={isGeneratingScript}
-              />
-              <span className="text-xs text-[#888]">集</span>
-            </div>
-            <button 
-              onClick={onGenerateFullScript}
-              disabled={isGeneratingScript || !scriptIdea.trim()}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0ABAB5] text-black text-sm font-medium hover:bg-[#0ABAB5]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isGeneratingScript ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  生成中...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  生成剧本
-                </>
-              )}
-            </button>
-          </div>
-          {generatedOutline && (
-            <div className="mt-4 p-3 bg-[#1A1A1A] rounded-lg">
-              <p className="text-xs text-[#888] mb-1">生成大纲：</p>
-              <p className="text-sm font-ui">{generatedOutline.title as string}</p>
-              <p className="text-xs text-[#888] mt-1">{generatedOutline.logline as string}</p>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* 三阶段生成进度 - 使用 P2 开发的 ThreeStageProgress 组件（受控模式） */}
-      {stageProgress && isGeneratingScript && (
-        <div className="mb-4">
-          <ThreeStageProgress
-            stages={[
-              { stage: 1, name: '核心对话生成', progress: stageProgress.stage > 1 ? 100 : stageProgress.stage === 1 ? 50 : 0, status: stageProgress.stage > 1 ? 'completed' : stageProgress.stage === 1 ? 'running' : 'pending' },
-              { stage: 2, name: '完整大纲生成', progress: stageProgress.stage > 2 ? 100 : stageProgress.stage === 2 ? 50 : 0, status: stageProgress.stage > 2 ? 'completed' : stageProgress.stage === 2 ? 'running' : 'pending' },
-              { stage: 3, name: '逐集撰写', progress: stageProgress.stage > 3 ? 100 : stageProgress.stage === 3 ? 50 : 0, status: stageProgress.stage > 3 ? 'completed' : stageProgress.stage === 3 ? 'running' : 'pending' },
-            ]}
-            currentStage={stageProgress.stage}
-          />
-        </div>
-      )}
-
-      {/* 传统进度显示（非三阶段模式时） */}
-      {(isUploading || (isGeneratingScript && !stageProgress) || uploadProgress || analyzeProgress) && (
+      {/* 传统进度显示 - 仅显示文件上传相关进度，不显示创意生成进度 */}
+      {(isUploading || uploadProgress || analyzeProgress) && (
         <div className="mb-4 p-3 bg-[#0ABAB5]/10 border border-[#0ABAB5]/30 rounded-lg flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-[#0ABAB5]" />
           <span className="text-sm text-[#0ABAB5]">{uploadProgress || analyzeProgress || '处理中...'}</span>
@@ -241,9 +103,9 @@ export default function ScriptEditor({
       )}
       
       {/* 集数标签栏 - 仅多集时显示 */}
-      {script?.episodeCount && script.episodeCount > 1 && (
+      {(script?.episodeCount ?? 1) > 1 && (
         <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-[#333]">
-          {Array.from({ length: script.episodeCount }, (_, i) => i + 1).map(ep => (
+          {Array.from({ length: script?.episodeCount ?? 1 }, (_, i) => i + 1).map(ep => (
             <button
               key={ep}
               onClick={() => setActiveEpisode(ep)}
@@ -271,34 +133,57 @@ export default function ScriptEditor({
           aria-label="上传剧本文件"
         />
         
-        {/* 右上角工具栏：版本切换 + 编辑/预览 */}
+        {/* 右上角工具栏：版本切换 + 编辑/预览 + 复制 + 应用到分镜 + 清空 */}
         <div className="absolute top-2 right-2 z-10 flex items-center gap-2">
-          {/* 版本切换 */}
-          {aiGeneratedContent && setContentVersion && (
-            <div className="flex items-center gap-1 px-2 py-1 bg-[#1A1A1A] rounded-lg border border-[#333]">
-              <button
-                onClick={() => setContentVersion('manual')}
-                className={`px-2 py-0.5 rounded text-xs transition-colors ${
-                  contentVersion === 'manual'
-                    ? 'bg-[#0ABAB5] text-black'
-                    : 'text-[#888] hover:text-[#F5F5F5]'
-                }`}
-              >
-                手动
-              </button>
-              <button
-                onClick={() => setContentVersion('ai')}
-                className={`px-2 py-0.5 rounded text-xs transition-colors flex items-center gap-1 ${
-                  contentVersion === 'ai'
-                    ? 'bg-[#0ABAB5] text-black'
-                    : 'text-[#888] hover:text-[#F5F5F5]'
-                }`}
-              >
-                AI
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-              </button>
-            </div>
+          {/* 清空按钮 */}
+          <button
+            onClick={handleClearContent}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors ${
+              showClearConfirm 
+                ? 'bg-red-500/20 border-red-500 text-red-500 hover:bg-red-500/30' 
+                : 'bg-[#1A1A1A] border-[#333] text-[#888] hover:text-red-500 hover:border-red-500/50'
+            }`}
+            title={showClearConfirm ? "确认清空" : "清空内容"}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {showClearConfirm ? "确认?" : "清空"}
+          </button>
+          {/* 应用到分镜按钮 */}
+          {onApplyToStoryboard && (
+            <button
+              onClick={() => {
+                const currentContent = script?.episodeCount && script.episodeCount > 1 
+                  ? (episodeContentMap[activeEpisode] || '') 
+                  : editContent;
+                if (currentContent && currentContent.trim()) {
+                  onApplyToStoryboard(currentContent, activeEpisode);
+                }
+              }}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-[#0ABAB5]/20 border border-[#0ABAB5]/50 text-xs text-[#0ABAB5] hover:bg-[#0ABAB5]/30 transition-colors"
+              title="将当前剧集内容应用到分镜拆分"
+            >
+              <Clapperboard className="w-3.5 h-3.5" />
+              分镜
+            </button>
           )}
+          {/* 复制按钮 */}
+          <button
+            onClick={() => {
+              const contentToCopy = script?.episodeCount && script.episodeCount > 1 
+                ? (episodeContentMap[activeEpisode] || '') 
+                : editContent;
+              if (contentToCopy) {
+                navigator.clipboard.writeText(contentToCopy);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-[#1A1A1A] border border-[#333] text-xs text-[#888] hover:text-[#0ABAB5] transition-colors"
+            title="复制内容"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? "已复制" : "复制"}
+          </button>
           {/* 编辑/预览切换 */}
           <button
             onClick={() => setShowPreview(!showPreview)}
@@ -315,14 +200,15 @@ export default function ScriptEditor({
         {showPreview ? (
           /* 预览模式：智能检测JSON格式，使用对应的渲染器 */
           (() => {
+            // 剧本编辑界面只使用 editContent，完全独立于创意生成界面
             const displayContent = script?.episodeCount && script.episodeCount > 1 
               ? (episodeContentMap[activeEpisode] || '') 
-              : (contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent);
+              : editContent;
             
             // 如果是JSON格式，使用美观的卡片式渲染
             if (isJsonScriptContent(displayContent)) {
               return (
-                <div className="w-full h-full overflow-auto pr-2">
+                <div ref={previewScrollRef} className="w-full h-full overflow-auto pr-2 relative">
                   <ScriptJsonRenderer 
                     content={displayContent}
                     onEpisodeClick={(ep) => {
@@ -331,13 +217,14 @@ export default function ScriptEditor({
                       }
                     }}
                   />
+                  <ScrollToTopButton scrollContainerRef={previewScrollRef} />
                 </div>
               );
             }
             
             // 否则使用传统的标签高亮渲染
             return (
-              <div className="w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 overflow-auto">
+              <div ref={previewScrollRef} className="w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 overflow-auto relative">
                 <ScriptContentRenderer
                   content={displayContent}
                   showTagLegend={true}
@@ -345,40 +232,27 @@ export default function ScriptEditor({
                     console.log('标签点击:', type, value);
                   }}
                 />
+                <ScrollToTopButton scrollContainerRef={previewScrollRef} />
               </div>
             );
           })()
         ) : (
-          /* 编辑模式：传统 textarea */
+          /* 编辑模式：传统 textarea，只编辑 editContent */
           <textarea
             key={activeEpisode}
-            className={`script-content w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none ${
-              contentVersion === 'ai' && aiGeneratedContent ? 'opacity-70 cursor-not-allowed' : ''
-            }`}
-            value={script?.episodeCount && script.episodeCount > 1 ? (episodeContentMap[activeEpisode] || '') : (contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent)}
+            className="script-content w-full h-full bg-[#1A1A1A] border border-[#333] rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
+            value={script?.episodeCount && script.episodeCount > 1 ? (episodeContentMap[activeEpisode] || '') : editContent}
             onChange={(e) => {
-              if (contentVersion === 'ai' && aiGeneratedContent) return;
               if (script?.episodeCount && script.episodeCount > 1) {
                 handleEpisodeContentChange(activeEpisode, e.target.value);
               } else {
                 setEditContent(e.target.value);
               }
             }}
-            readOnly={contentVersion === 'ai' && !!aiGeneratedContent}
             placeholder={script?.episodeCount && script.episodeCount > 1 ? `第 ${activeEpisode} 集内容...` : "在此输入或粘贴剧本内容..."}
           />
         )}
       </div>
-      
-      {/* 五维度评分卡片 - 使用 P2 开发的 FiveDimensionScoreCard 组件 */}
-      {script && (editContent?.trim() || aiGeneratedContent?.trim()) && (
-        <div className="mt-4">
-          <FiveDimensionScoreCard
-            scriptId={script.id}
-            scriptContent={contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent}
-          />
-        </div>
-      )}
 
       {/* 提示信息 */}
       {script?.episodeCount && script.episodeCount > 1 && (

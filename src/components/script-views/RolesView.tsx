@@ -128,8 +128,8 @@ export default function RolesView({
           {roles.map((role, index) => (
             <div 
               key={index} 
-              className={`bg-[#141414] border rounded-xl p-5 space-y-3 ${
-                selectedRoles.includes(index) ? 'border-[#0ABAB5] ring-1 ring-[#0ABAB5]/30' : 'border-[#333]'
+              className={`bg-muted border rounded-xl p-5 space-y-3 ${
+                selectedRoles.includes(index) ? 'border-nvwa-primary ring-1 ring-nvwa-primary/30' : 'border-[#333]'
               }`}
             >
               <div className="flex items-center gap-3">
@@ -137,14 +137,14 @@ export default function RolesView({
                   onClick={() => toggleSelectRole(index)}
                   className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
                     selectedRoles.includes(index) 
-                      ? 'bg-[#0ABAB5] border-[#0ABAB5]' 
-                      : 'border-[#333] hover:border-[#0ABAB5]'
+                      ? 'bg-nvwa-primary border-nvwa-primary' 
+                      : 'border-[#333] hover:border-nvwa-primary'
                   }`}
                 >
                   {selectedRoles.includes(index) && <Check className="w-3 h-3 text-black" />}
                 </button>
-                <div className="w-10 h-10 rounded-full bg-[#0ABAB5]/20 flex items-center justify-center">
-                  <Users className="w-5 h-5 text-[#0ABAB5]" />
+                <div className="w-10 h-10 rounded-full bg-nvwa-primary/20 flex items-center justify-center">
+                  <Users className="w-5 h-5 text-nvwa-primary" />
                 </div>
                 <div className="flex-1">
                   {editingIndex === index ? (
@@ -152,12 +152,12 @@ export default function RolesView({
                       type="text"
                       value={editRole?.name || ''}
                       onChange={(e) => setEditRole(prev => prev ? { ...prev, name: e.target.value } : prev)}
-                      className="bg-[#1A1A1A] border border-[#0ABAB5] rounded px-2 py-1 text-sm text-foreground focus:outline-none w-full"
+                      className="bg-nvwa-surface border border-nvwa-primary rounded px-2 py-1 text-sm text-foreground focus:outline-none w-full"
                     />
                   ) : (
                     <h3 className="font-ui text-foreground">{role.name}</h3>
                   )}
-                  <Badge variant="secondary" className="text-xs bg-[#1A1A1A] text-[#888888] border-none">{role.tag}</Badge>
+                  <Badge variant="secondary" className="text-xs bg-nvwa-surface text-nvwa-text-secondary border-none">{role.tag}</Badge>
                 </div>
                 <div className="flex items-center gap-1">
                   {editingIndex === index ? (
@@ -184,48 +184,48 @@ export default function RolesView({
                 {editingIndex === index ? (
                   <>
                     <div>
-                      <span className="text-[#0ABAB5]">性格：</span>
+                      <span className="text-nvwa-primary">性格：</span>
                       <input
                         type="text"
                         value={editRole?.description || ''}
                         onChange={(e) => setEditRole(prev => prev ? { ...prev, description: e.target.value } : prev)}
-                        className="bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-[#0ABAB5] ml-1 w-2/3"
+                        className="bg-nvwa-surface border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-nvwa-primary ml-1 w-2/3"
                       />
                     </div>
                     <div>
-                      <span className="text-[#0ABAB5]">外貌：</span>
+                      <span className="text-nvwa-primary">外貌：</span>
                       <input
                         type="text"
                         value={editRole?.appearance || ''}
                         onChange={(e) => setEditRole(prev => prev ? { ...prev, appearance: e.target.value } : prev)}
-                        className="bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-[#0ABAB5] ml-1 w-2/3"
+                        className="bg-nvwa-surface border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-nvwa-primary ml-1 w-2/3"
                       />
                     </div>
                     <div>
-                      <span className="text-[#0ABAB5]">服装：</span>
+                      <span className="text-nvwa-primary">服装：</span>
                       <input
                         type="text"
                         value={editRole?.costume || ''}
                         onChange={(e) => setEditRole(prev => prev ? { ...prev, costume: e.target.value } : prev)}
-                        className="bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-[#0ABAB5] ml-1 w-2/3"
+                        className="bg-nvwa-surface border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-nvwa-primary ml-1 w-2/3"
                       />
                     </div>
                     <div>
-                      <span className="text-[#0ABAB5]">关系：</span>
+                      <span className="text-nvwa-primary">关系：</span>
                       <input
                         type="text"
                         value={editRole?.feature || ''}
                         onChange={(e) => setEditRole(prev => prev ? { ...prev, feature: e.target.value } : prev)}
-                        className="bg-[#1A1A1A] border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-[#0ABAB5] ml-1 w-2/3"
+                        className="bg-nvwa-surface border border-[#333] rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-nvwa-primary ml-1 w-2/3"
                       />
                     </div>
                   </>
                 ) : (
                   <>
-                    {role.description && <p className="text-muted-foreground"><span className="text-[#0ABAB5]">性格：</span>{role.description}</p>}
-                    {role.appearance && <p className="text-muted-foreground"><span className="text-[#0ABAB5]">外貌：</span>{role.appearance}</p>}
-                    {role.costume && <p className="text-muted-foreground"><span className="text-[#0ABAB5]">服装：</span>{role.costume}</p>}
-                    {role.feature && <p className="text-muted-foreground"><span className="text-[#0ABAB5]">关系：</span>{role.feature}</p>}
+                    {role.description && <p className="text-muted-foreground"><span className="text-nvwa-primary">性格：</span>{role.description}</p>}
+                    {role.appearance && <p className="text-muted-foreground"><span className="text-nvwa-primary">外貌：</span>{role.appearance}</p>}
+                    {role.costume && <p className="text-muted-foreground"><span className="text-nvwa-primary">服装：</span>{role.costume}</p>}
+                    {role.feature && <p className="text-muted-foreground"><span className="text-nvwa-primary">关系：</span>{role.feature}</p>}
                   </>
                 )}
               </div>
