@@ -171,10 +171,10 @@ export function StoryboardCard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          prompt: editablePrompt, 
-          model: 'wan2.7-image-pro', // 阿里云万相2.7 Pro
-          n: 1,
-          size: imgRatio === "16:9" ? "1280*720" : imgRatio === "9:16" ? "720*1280" : "1024*1024"
+          sceneDescription: editablePrompt,  // 使用正确的字段名
+          aspectRatio: imgRatio === "16:9" ? '16:9' : imgRatio === "9:16" ? '9:16' : '1:1',
+          style: 'cinematic',  // 电影风格适合分镜
+          quality: 'hd',
         }),
       });
       const data = await res.json();
