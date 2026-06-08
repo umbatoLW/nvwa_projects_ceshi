@@ -76,7 +76,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className={`dark ${inter.variable} ${notoSerifSC.variable} ${jetBrainsMono.variable}`}>
-      <body className="font-sans antialiased">
+      <body className="aurora-bg text-nvwa-text font-sans antialiased custom-scrollbar">
         <ClientProviders>
           <GlobalErrorBoundary>
             <Inspector />

@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import '../styles/theme.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -28,6 +29,27 @@
   --letter-spacing-tight: -0.01em;
   --letter-spacing-normal: 0em;
   --letter-spacing-wide: 0.015em;
+
+  /* === NVWA Design System Colors (毛玻璃风格) === */
+  --color-nvwa-bg: #070A14;
+  --color-nvwa-bg-elevated: #0D1117;
+  --color-nvwa-surface: rgba(255, 255, 255, 0.06);
+  --color-nvwa-surface-hover: rgba(255, 255, 255, 0.10);
+  --color-nvwa-surface-active: rgba(255, 255, 255, 0.14);
+  --color-nvwa-primary: #7C5CFF;
+  --color-nvwa-primary-hover: #9374FF;
+  --color-nvwa-primary-muted: rgba(124, 92, 255, 0.15);
+  --color-nvwa-accent: #69E7FF;
+  --color-nvwa-accent-hover: #8AEDFF;
+  --color-nvwa-accent-muted: rgba(105, 231, 255, 0.15);
+  --color-nvwa-success: #62FAD3;
+  --color-nvwa-warning: #F5A623;
+  --color-nvwa-error: #FF6B6B;
+  --color-nvwa-text: #F7FAFF;
+  --color-nvwa-text-secondary: #9AA7C7;
+  --color-nvwa-text-muted: #6B7280;
+  --color-nvwa-border: rgba(255, 255, 255, 0.08);
+  --color-nvwa-border-hover: rgba(255, 255, 255, 0.12);
 
   /* === 颜色变量 === */
   --color-background: var(--background);
@@ -680,7 +702,140 @@ input[type="number"],
 input[type="email"],
 input[type="tel"],
 input[type="password"],
-textarea,
 select {
   font-size: 16px !important; /* iOS Safari必须>=16px才不缩放 */
+}
+
+/* textarea 字号由组件内 Tailwind 类控制，不全局覆盖 */
+textarea {
+  font-size: 14px; /* 默认值，可被组件覆盖 */
+}
+
+/* 隐藏 number 输入框的默认增减箭头 */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+/* ============================================
+   F-7: 玻璃拟态与动效
+   ============================================ */
+
+/* 玻璃拟态面板 */
+.glass-panel {
+  background: rgba(20, 20, 20, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.glass-panel-light {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+/* 发光边框 */
+.glow-border {
+  position: relative;
+}
+.glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--primary) 0%, transparent 50%);
+  opacity: 0.3;
+  z-index: -1;
+}
+
+/* 极光渐变背景 */
+.aurora-bg {
+  background: 
+    radial-gradient(ellipse at 20% 20%, rgba(124, 92, 255, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(105, 231, 255, 0.1) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(98, 250, 211, 0.08) 0%, transparent 50%),
+    var(--background);
+}
+
+/* 悬停发光效果 */
+.hover-glow {
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+.hover-glow:hover {
+  box-shadow: 0 0 20px rgba(124, 92, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+/* 柔和霓虹文字 */
+.neon-text {
+  text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+}
+
+/* 漂浮卡片动画 */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+/* 脉冲发光 */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px var(--primary); }
+  50% { box-shadow: 0 0 20px var(--primary), 0 0 30px var(--primary); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* 渐变流动 */
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-flow 8s ease infinite;
+}
+
+/* ============================================
+   F-11: 响应式断点
+   ============================================ */
+
+/* 超小屏幕 (< 375px) */
+@media (max-width: 374px) {
+  .text-xs-mobile { font-size: 0.75rem; }
+  .p-xs-mobile { padding: 0.5rem; }
+  .gap-xs-mobile { gap: 0.5rem; }
+}
+
+/* 小屏幕手机 (375px - 640px) */
+@media (min-width: 375px) and (max-width: 639px) {
+  .grid-cols-auto-sm { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+
+/* 平板 (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .grid-cols-auto-md { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+}
+
+/* 桌面 (1024px - 1440px) */
+@media (min-width: 1024px) and (max-width: 1439px) {
+  .max-w-desktop { max-width: 1200px; }
+}
+
+/* 大屏 (>= 1440px) */
+@media (min-width: 1440px) {
+  .max-w-wide { max-width: 1440px; }
 }

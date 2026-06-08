@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chatCompletion, LLMMessage } from "@/lib/ai-client";
+import { loadKnowledgeForTask } from "@/lib/prompt-knowledge";
+
 
 // 敏感词分类配置
 const SENSITIVE_CATEGORIES = {
@@ -160,10 +162,15 @@ function quickKeywordCheck(content: string): ComplianceIssue[] {
 async function aiComplianceCheck(
   content: string
 ): Promise<{ issues: ComplianceIssue[]; analysis: string }> {
+  // 加载合规知识库
+  const complianceKnowledge = loadKnowledgeForTask("compliance-check");
+  
   const messages: LLMMessage[] = [
     {
       role: "system",
       content: `你是一位专业的内容审查专家。请审查以下剧本内容，识别可能存在的合规问题。
+
+${complianceKnowledge}
 
 请按以下JSON格式输出审查结果：
 {
@@ -178,14 +185,6 @@ async function aiComplianceCheck(
   ],
   "analysis": "整体内容合规性分析报告"
 }
-
-审查重点：
-1. 暴力血腥：过度暴力描写、血腥场面
-2. 色情低俗：性暗示、低俗内容
-3. 歧视言论：种族、性别、地域歧视
-4. 违法内容：赌博、毒品、诈骗等
-5. 未成年人保护：不适合未成年人的内容
-6. 其他：可能引发争议的内容
 
 注意：
 - 只输出JSON，不要有其他文字

@@ -36,9 +36,9 @@ const genreOptions = ['全部', '都市甜宠', '玄幻修仙', '悬疑探案', 
 const statusOptions = ['全部', '草稿', '审核中', '已完成'];
 
 const statusColors: Record<string, string> = {
-  草稿: 'bg-[#888888]/20 text-[#888888]',
-  审核中: 'bg-[#F59E0B]/20 text-[#F59E0B]',
-  已完成: 'bg-[#22C55E]/20 text-[#22C55E]',
+  草稿: 'bg-nvwa-text-muted/20 text-nvwa-text-muted',
+  审核中: 'bg-nvwa-warning/20 text-nvwa-warning',
+  已完成: 'bg-nvwa-success/20 text-nvwa-success',
 };
 
 // 状态映射：API返回值 -> 中文显示
@@ -192,7 +192,7 @@ export default function ScriptsPage() {
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-[#F5F5F5]">剧本库</h1>
+          <h1 className="text-xl font-bold text-nvwa-text">剧本库</h1>
           <button
             onClick={async () => {
               try {
@@ -217,7 +217,7 @@ export default function ScriptsPage() {
                 toast.error('创建失败: ' + (error instanceof Error ? error.message : String(error)));
               }
             }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0ABAB5] text-black text-sm font-medium hover:shadow-[0_0_12px_rgba(10,186,181,0.3)] transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-nvwa-primary text-black text-sm font-medium hover:shadow-[0_0_12px_rgba(10,186,181,0.3)] transition-all"
           >
             <Plus className="w-4 h-4" />
             新建剧本
@@ -227,19 +227,19 @@ export default function ScriptsPage() {
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888]" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-nvwa-text-secondary" />
             <input
               type="text"
               placeholder="搜索剧本..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg bg-[#1A1A1A] border-none text-sm text-[#F5F5F5] placeholder:text-[#888888] focus:outline-none focus:ring-2 focus:ring-[#0ABAB5]/30"
+              className="w-full pl-9 pr-4 py-2 rounded-lg bg-nvwa-surface border-none text-sm text-nvwa-text placeholder:text-nvwa-text-secondary focus:outline-none focus:ring-2 focus:ring-nvwa-primary/30"
             />
           </div>
           <select
             value={genreFilter}
             onChange={(e) => setGenreFilter(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-[#1A1A1A] border-none text-sm text-[#F5F5F5] focus:outline-none focus:ring-2 focus:ring-[#0ABAB5]/30"
+            className="px-3 py-2 rounded-lg bg-nvwa-surface border-none text-sm text-nvwa-text focus:outline-none focus:ring-2 focus:ring-nvwa-primary/30"
           >
             {genreOptions.map((g) => (
               <option key={g} value={g}>{g}</option>
@@ -248,7 +248,7 @@ export default function ScriptsPage() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-[#1A1A1A] border-none text-sm text-[#F5F5F5] focus:outline-none focus:ring-2 focus:ring-[#0ABAB5]/30"
+            className="px-3 py-2 rounded-lg bg-nvwa-surface border-none text-sm text-nvwa-text focus:outline-none focus:ring-2 focus:ring-nvwa-primary/30"
           >
             {statusOptions.map((s) => (
               <option key={s} value={s}>{s}</option>
@@ -257,13 +257,13 @@ export default function ScriptsPage() {
           <div className="flex items-center gap-1 ml-auto">
             <button
               onClick={() => setViewMode('grid')}
-              className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-[#0ABAB5]/10 text-[#0ABAB5]' : 'text-[#888888] hover:bg-[#1A1A1A]'}`}
+              className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-nvwa-primary/10 text-nvwa-primary' : 'text-nvwa-text-secondary hover:bg-nvwa-surface'}`}
             >
               <Grid3X3 className="w-4 h-4" />
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-[#0ABAB5]/10 text-[#0ABAB5]' : 'text-[#888888] hover:bg-[#1A1A1A]'}`}
+              className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-nvwa-primary/10 text-nvwa-primary' : 'text-nvwa-text-secondary hover:bg-nvwa-surface'}`}
             >
               <List className="w-4 h-4" />
             </button>
@@ -272,18 +272,18 @@ export default function ScriptsPage() {
 
         {/* Batch Actions */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-[#0ABAB5]/10 border border-[#0ABAB5]/20">
-            <span className="text-sm text-[#0ABAB5]">已选择 {selectedIds.size} 项</span>
+          <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-nvwa-primary/10 border border-nvwa-primary/20">
+            <span className="text-sm text-nvwa-primary">已选择 {selectedIds.size} 项</span>
             <button
               onClick={deleteSelected}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#EF4444]/20 text-[#EF4444] text-xs font-medium hover:bg-[#EF4444]/30 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-nvwa-error/20 text-nvwa-error text-xs font-medium hover:bg-nvwa-error/30 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
               批量删除
             </button>
             <button
               onClick={deselectAll}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#888888] text-xs font-medium hover:text-[#F5F5F5] transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-nvwa-surface text-nvwa-text-secondary text-xs font-medium hover:text-nvwa-text transition-colors"
             >
               <X className="w-3.5 h-3.5" />
               取消选择
@@ -293,7 +293,7 @@ export default function ScriptsPage() {
 
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-[#0ABAB5]/30 border-t-[#0ABAB5] rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-nvwa-primary/30 border-t-nvwa-primary rounded-full animate-spin" />
           </div>
         )}
 
@@ -303,10 +303,10 @@ export default function ScriptsPage() {
             {filtered.map((script) => (
               <div
                 key={script.id}
-                className="group bg-[#141414] border border-[#333333]/30 rounded-xl overflow-hidden hover:border-[#0ABAB5]/50 transition-colors relative"
+                className="group bg-muted border border-nvwa-border/30 rounded-xl overflow-hidden hover:border-nvwa-primary/50 transition-colors relative"
               >
                 <Link href={`/scripts/${script.id}`} className="block">
-                  <div className="h-28 bg-[#1A1A1A] flex items-center justify-center overflow-hidden">
+                  <div className="h-28 bg-nvwa-surface flex items-center justify-center overflow-hidden">
                     {script.coverImage ? (
                       <img 
                         src={script.coverImage} 
@@ -314,31 +314,31 @@ export default function ScriptsPage() {
                         className="w-full h-full object-cover"
                       />
                     ) : (
-                      <FileText className="w-10 h-10 text-[#333333] group-hover:text-[#0ABAB5]/40 transition-colors" />
+                      <FileText className="w-10 h-10 text-nvwa-border group-hover:text-nvwa-primary/40 transition-colors" />
                     )}
                   </div>
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#0ABAB5]/10 text-[#0ABAB5]">{script.genre}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[statusMapping[script.status] || script.status] || 'bg-[#888888]/20 text-[#888888]'}`}>{statusMapping[script.status] || script.status}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-nvwa-primary/10 text-nvwa-primary">{script.genre}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[statusMapping[script.status] || script.status] || 'bg-nvwa-text-secondary/20 text-nvwa-text-secondary'}`}>{statusMapping[script.status] || script.status}</span>
                     </div>
-                    <h3 className="text-sm font-medium text-[#F5F5F5] truncate">{script.title}</h3>
-                    <p className="text-xs text-[#888888] mt-1">{script.scenes} 场 / {(script.words || 0).toLocaleString()} 字</p>
-                    <p className="text-xs text-[#888888] mt-0.5">{script.time || ''}</p>
+                    <h3 className="text-sm font-medium text-nvwa-text truncate">{script.title}</h3>
+                    <p className="text-xs text-nvwa-text-secondary mt-1">{script.scenes} 场 / {(script.words || 0).toLocaleString()} 字</p>
+                    <p className="text-xs text-nvwa-text-secondary mt-0.5">{script.time || ''}</p>
                   </div>
                 </Link>
                 {/* Selection + Actions */}
                 <div className="absolute top-2 left-2 flex items-center gap-1.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleSelect(script.id); }}
-                    className={`p-1.5 rounded-lg transition-colors ${selectedIds.has(script.id) ? 'bg-[#0ABAB5]/20 text-[#0ABAB5]' : 'bg-black/50 text-[#888888] hover:text-[#F5F5F5]'}`}
+                    className={`p-1.5 rounded-lg transition-colors ${selectedIds.has(script.id) ? 'bg-nvwa-primary/20 text-nvwa-primary' : 'bg-black/50 text-nvwa-text-secondary hover:text-nvwa-text'}`}
                   >
                     {selectedIds.has(script.id) ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
                   </button>
                 </div>
                 <button
                   onClick={(e) => deleteOne(script.id, e)}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-[#888888] hover:text-[#EF4444] opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-nvwa-text-secondary hover:text-nvwa-error opacity-0 group-hover:opacity-100 transition-opacity"
                   title="删除"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -350,12 +350,12 @@ export default function ScriptsPage() {
 
         {/* List View */}
         {!loading && viewMode === 'list' && (
-          <div className="bg-[#141414] border border-[#333333]/30 rounded-xl overflow-hidden">
+          <div className="bg-muted border border-nvwa-border/30 rounded-xl overflow-hidden">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#333333]/30 text-[#888888]">
+                <tr className="border-b border-nvwa-border/30 text-nvwa-text-secondary">
                   <th className="text-left px-4 py-3 font-medium w-10">
-                    <button onClick={isAllSelected ? deselectAll : selectAll} className="text-[#888888] hover:text-[#0ABAB5] transition-colors">
+                    <button onClick={isAllSelected ? deselectAll : selectAll} className="text-nvwa-text-secondary hover:text-nvwa-primary transition-colors">
                       {isAllSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                     </button>
                   </th>
@@ -370,33 +370,33 @@ export default function ScriptsPage() {
               </thead>
               <tbody>
                 {filtered.map((script) => (
-                  <tr key={script.id} className="border-b border-[#333333]/20 hover:bg-[#1A1A1A]/50 transition-colors">
+                  <tr key={script.id} className="border-b border-nvwa-border/20 hover:bg-nvwa-surface/50 transition-colors">
                     <td className="px-4 py-3">
                       <button
                         onClick={() => toggleSelect(script.id)}
-                        className={`transition-colors ${selectedIds.has(script.id) ? 'text-[#0ABAB5]' : 'text-[#888888] hover:text-[#F5F5F5]'}`}
+                        className={`transition-colors ${selectedIds.has(script.id) ? 'text-nvwa-primary' : 'text-nvwa-text-secondary hover:text-nvwa-text'}`}
                       >
                         {selectedIds.has(script.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                       </button>
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/scripts/${script.id}`} className="text-[#F5F5F5] hover:text-[#0ABAB5] transition-colors">
+                      <Link href={`/scripts/${script.id}`} className="text-nvwa-text hover:text-nvwa-primary transition-colors">
                         {script.title}
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-[#0ABAB5]/10 text-[#0ABAB5]">{script.genre}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-nvwa-primary/10 text-nvwa-primary">{script.genre}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[statusMapping[script.status] || script.status] || 'bg-[#888888]/20 text-[#888888]'}`}>{statusMapping[script.status] || script.status}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[statusMapping[script.status] || script.status] || 'bg-nvwa-text-secondary/20 text-nvwa-text-secondary'}`}>{statusMapping[script.status] || script.status}</span>
                     </td>
-                    <td className="px-4 py-3 text-[#888888]">{(script.words || 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-[#888888]">{script.scenes}</td>
-                    <td className="px-4 py-3 text-[#888888]">{script.time}</td>
+                    <td className="px-4 py-3 text-nvwa-text-secondary">{(script.words || 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-nvwa-text-secondary">{script.scenes}</td>
+                    <td className="px-4 py-3 text-nvwa-text-secondary">{script.time}</td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => deleteOne(script.id)}
-                        className="text-[#888888] hover:text-[#EF4444] transition-colors"
+                        className="text-nvwa-text-secondary hover:text-nvwa-error transition-colors"
                         title="删除"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -413,7 +413,7 @@ export default function ScriptsPage() {
         <div className="flex items-center justify-center mt-4">
           <button
             onClick={() => loadScripts()}
-            className="text-sm text-[#0ABAB5] hover:underline"
+            className="text-sm text-nvwa-primary hover:underline"
           >
             刷新列表
           </button>

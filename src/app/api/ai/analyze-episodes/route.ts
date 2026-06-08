@@ -106,21 +106,106 @@ export async function POST(request: NextRequest) {
     const lines = scriptContent.split('\n');
     const totalChars = scriptContent.length;
 
-    // 第一步：使用正则匹配识别剧本中的集数标记
-    const episodeMarkers: { episode: number; lineIndex: number; title: string }[] = [];
-    
-    // 常见的集数标记模式
-    const episodePatterns = [
-      /^第\s*(\d+)\s*集[：:：\s]*(.*)$/i,           // 第1集、第 1 集、第1集：标题
-      /^EPISODE\s*(\d+)[：:：\s]*(.*)$/i,          // EPISODE 1, EPISODE 1: Title
-      /^Episode\s*(\d+)[：:：\s]*(.*)$/i,          // Episode 1, Episode 1: Title
-      /^E(\d+)[：:：\s]*(.*)$/i,                    // E1, E1: 标题
-      /^【第\s*(\d+)\s*集】[：:：\s]*(.*)$/i,      // 【第1集】标题
-      /^(\d+)[\.．]\s*(.*)$/,                       // 1. 标题
+    // 第一步：找到剧本正文起始位置（跳过项目简介、大纲、人物小传等前置内容）
+    let scriptBodyStartLine = 0;
+    const scriptBodyMarkers = [
+      /【剧本正文】/,
+      /\[剧本正文\]/,
+      /剧本正文[：:]/,
+      /【正文】/,
+      /\[正文\]/,
     ];
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
+      for (const marker of scriptBodyMarkers) {
+        if (marker.test(line)) {
+          // 找到标记行，从下一行开始
+          scriptBodyStartLine = i + 1;
+          
+          // 跳过标记行后面可能存在的空行
+          while (scriptBodyStartLine < lines.length && lines[scriptBodyStartLine].trim() === '') {
+            scriptBodyStartLine++;
+          }
+          
+          break;
+        }
+      }
+      if (scriptBodyStartLine > 0) break;
+    }
+    
+    console.log('[分集分析] 剧本正文起始行:', scriptBodyStartLine, '总行数:', lines.length);
+    if (scriptBodyStartLine > 0) {
+      console.log('[分集分析] 正文前几行:', lines.slice(scriptBodyStartLine, scriptBodyStartLine + 5));
+    }
+
+    // 第二步：使用正则匹配识别剧本中的集数标记
+    const episodeMarkers: { episode: number; lineIndex: number; title: string }[] = [];
+    
+    // 常见的集数标记模式（按优先级排序，更具体的模式在前）
+    const episodePatterns = [
+      // 书名号格式（最高优先级，AI生成常用）
+      /^【第\s*(\d+)\s*集】[：:：\s]*(.*)$/i,      // 【第1集】标题
+      /^【第\s*(\d+)\s*话】[：:：\s]*(.*)$/i,      // 【第1话】标题（日剧）
+      /^【第\s*(\d+)\s*章】[：:：\s]*(.*)$/i,      // 【第1章】标题（小说改编）
+      
+      // 方括号格式
+      /^\[第\s*(\d+)\s*集\][：:：\s]*(.*)$/i,      // [第1集]标题
+      /^\[EP\s*0*(\d+)\][：:：\s]*(.*)$/i,         // [EP01]标题
+      
+      // 简单格式（单独一行）
+      /^第\s*(\d+)\s*集$/i,                        // 第1集
+      /^第\s*(\d+)\s*话$/i,                        // 第1话
+      /^第\s*(\d+)\s*章$/i,                        // 第1章
+      
+      // 带标题格式
+      /^第\s*(\d+)\s*集[：:：\s]+(.*)$/i,          // 第1集：标题
+      /^第\s*(\d+)\s*话[：:：\s]+(.*)$/i,          // 第1话：标题
+      /^第\s*(\d+)\s*章[：:：\s]+(.*)$/i,          // 第1章：标题
+      
+      // 英文格式
+      /^EPISODE\s*(\d+)[：:：\s]*(.*)$/i,          // EPISODE 1
+      /^Episode\s*(\d+)[：:：\s]*(.*)$/i,          // Episode 1
+      /^EP\s*0*(\d+)[：:：\s]*(.*)$/i,             // EP01
+      /^E\s*(\d+)[：:：\s]*(.*)$/i,                // E1
+      
+      // 季集格式（美剧常用）
+      /^S\s*(\d+)\s*E\s*(\d+)[：:：\s]*(.*)$/i,    // S1E1
+      
+      // 数字序号
+      /^(\d+)[\.．]\s*(.*)$/,                       // 1. 标题
+      /^#(\d+)[：:：\s]*(.*)$/i,                    // #1 标题
+      /^P\s*(\d+)[：:：\s]*(.*)$/i,                 // P1 标题
+    ];
+    
+    // 检查带分隔线的格式（══════════════════════════════\n【第1集】）
+    const separatorLinePattern = /^[═_=\-~]{10,}$/;
+    
+    // 只从剧本正文开始位置进行识别
+    for (let i = scriptBodyStartLine; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // 检查是否是分隔线，下一行可能是集数标题
+      if (separatorLinePattern.test(line) && i + 1 < lines.length) {
+        const nextLine = lines[i + 1].trim();
+        for (const pattern of episodePatterns) {
+          const match = nextLine.match(pattern);
+          if (match) {
+            const episodeNum = parseInt(match[1], 10);
+            if (episodeNum > 0 && episodeNum <= 500) {
+              episodeMarkers.push({
+                episode: episodeNum,
+                lineIndex: i, // 从分隔线开始
+                title: match[2]?.trim() || `第${episodeNum}集`,
+              });
+            }
+            break;
+          }
+        }
+        continue;
+      }
+      
+      // 常规匹配
       for (const pattern of episodePatterns) {
         const match = line.match(pattern);
         if (match) {
@@ -137,8 +222,10 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // 如果通过正则找到了多个集数标记，直接使用
-    if (episodeMarkers.length >= 2) {
+    console.log('[分集分析] 找到的剧集标记:', episodeMarkers.length, episodeMarkers.slice(0, 10));
+    
+    // 如果通过正则找到了集数标记，直接使用
+    if (episodeMarkers.length >= 1) {
       // 按集数排序并去重
       const sortedMarkers = episodeMarkers
         .sort((a, b) => a.episode - b.episode)
@@ -194,12 +281,40 @@ export async function POST(request: NextRequest) {
       
       // 如果找到了多集
       if (allEpisodes.length >= 2) {
-        // 重新计算行号
-        const episodesWithLines = allEpisodes.map((ep, idx) => ({
-          ...ep,
-          startLine: idx === 0 ? 1 : Math.floor(idx * lines.length / allEpisodes.length),
-          endLine: idx === allEpisodes.length - 1 ? lines.length : Math.floor((idx + 1) * lines.length / allEpisodes.length),
-        }));
+        // 重新计算行号（使用精确匹配而非估算）
+        const episodesWithLines = allEpisodes.map((ep, idx) => {
+          // 尝试在内容中找到该集的标题位置
+          const titlePattern = new RegExp(`第\\s*${ep.episode}\\s*集`, 'i');
+          const bracketPattern = new RegExp(`【第\\s*${ep.episode}\\s*集】`, 'i');
+          let startLine = 1;
+          let endLine = lines.length;
+          
+          // 查找该集的起始位置
+          for (let i = 0; i < lines.length; i++) {
+            if (titlePattern.test(lines[i]) || bracketPattern.test(lines[i])) {
+              startLine = i + 1;
+              break;
+            }
+          }
+          
+          // 找到下一集的位置作为结束位置
+          if (idx < allEpisodes.length - 1) {
+            const nextTitlePattern = new RegExp(`第\\s*${allEpisodes[idx + 1].episode}\\s*集`, 'i');
+            const nextBracketPattern = new RegExp(`【第\\s*${allEpisodes[idx + 1].episode}\\s*集】`, 'i');
+            for (let i = startLine; i < lines.length; i++) {
+              if (nextTitlePattern.test(lines[i]) || nextBracketPattern.test(lines[i])) {
+                endLine = i;
+                break;
+              }
+            }
+          }
+          
+          return {
+            ...ep,
+            startLine,
+            endLine,
+          };
+        });
         
         return NextResponse.json({
           success: true,

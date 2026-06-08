@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { sanitizeScriptInput } from '@/lib/security/xss-sanitizer';
 
 function toCamelCase(script: Record<string, unknown>) {
   return {
@@ -21,6 +22,9 @@ function toCamelCase(script: Record<string, unknown>) {
     sceneCount: script.scene_count || 0,
     status: script.status,
     coverImage: script.cover_image || null,
+    // 添加大纲和AI内容字段
+    outline: script.outline || null,
+    aiContent: script.ai_content || '',
     createdAt: script.created_at,
     updatedAt: script.updated_at,
   };
@@ -36,7 +40,7 @@ export async function GET(
   let error = null;
   const res1 = await client
     .from('scripts')
-    .select('id, title, genre, synopsis, content, scenes, characters, storyboards, roles, costumes, props, extracted_scenes, episode_count, word_count, scene_count, status, cover_image, created_at, updated_at')
+    .select('id, title, genre, synopsis, content, scenes, characters, storyboards, roles, costumes, props, extracted_scenes, episode_count, word_count, scene_count, status, cover_image, outline, ai_content, created_at, updated_at')
     .eq('id', id)
     .maybeSingle();
   if (res1.error) {
@@ -64,11 +68,20 @@ export async function PUT(
   const { id } = await params;
   const body = await request.json();
   const client = getSupabaseClient();
+  
+  // XSS 过滤：清理用户输入的敏感字段
+  const sanitized = sanitizeScriptInput({
+    title: body.title,
+    genre: body.genre,
+    synopsis: body.synopsis,
+    content: body.content,
+  });
+  
   const updatePayload: Record<string, unknown> = {};
-  if ('title' in body) updatePayload.title = body.title;
-  if ('genre' in body) updatePayload.genre = body.genre;
-  if ('synopsis' in body) updatePayload.synopsis = body.synopsis;
-  if ('content' in body) updatePayload.content = body.content;
+  if ('title' in body) updatePayload.title = sanitized.title;
+  if ('genre' in body) updatePayload.genre = sanitized.genre;
+  if ('synopsis' in body) updatePayload.synopsis = sanitized.synopsis;
+  if ('content' in body) updatePayload.content = sanitized.content;
   if ('scenes' in body) updatePayload.scenes = body.scenes;
   if ('characters' in body) updatePayload.characters = body.characters;
   if ('storyboards' in body) updatePayload.storyboards = body.storyboards;
@@ -82,6 +95,9 @@ export async function PUT(
   if ('sceneCount' in body) updatePayload.scene_count = body.sceneCount;
   if ('status' in body) updatePayload.status = body.status;
   if ('coverImage' in body) updatePayload.cover_image = body.coverImage;
+  // 添加大纲和AI内容字段的保存
+  if ('outline' in body) updatePayload.outline = body.outline;
+  if ('aiContent' in body) updatePayload.ai_content = body.aiContent;
   updatePayload.updated_at = new Date().toISOString();
 
   let data = null;

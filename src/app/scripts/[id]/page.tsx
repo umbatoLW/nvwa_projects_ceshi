@@ -1,12 +1,23 @@
 "use client";
 import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
+import { cleanAiOutput, safeJsonParse, isScriptJson, formatScriptJsonToText } from '@/lib/content/content-cleaner';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAIStream } from "@/hooks/useAIStream";
 import { StoryboardCard, ScriptStoryboard } from "@/components/StoryboardCard";
@@ -14,7 +25,7 @@ import { ScriptChatPanel } from "@/components/script-chat/ScriptChatPanel";
 // P2-8 前端适配组件
 import {
   ThreeStageProgress,
-  FiveDimensionScoreCard,
+  ScoreView,
   ScriptContentRenderer,
 } from "@/components/script-generation";
 // 拆分后的子组件
@@ -26,13 +37,13 @@ import {
   CostumesView,
   ScenesView,
   PropsView,
-  RedlineView,
 } from "@/components/script-views";
+// AI 工具箱
+import { AiToolbox } from "@/components/script-layout";
 import {
   ArrowLeft,
   Download,
   Trash2,
-  ShieldAlert,
   Wand2,
   Users,
   FileText,
@@ -52,6 +63,8 @@ import {
   RefreshCw,
   Zap,
   ImageIcon,
+  BarChart3,
+  AlertTriangle,
 } from "lucide-react";
 
 interface ScriptScene {
@@ -94,7 +107,7 @@ interface ScriptDetail {
   extractedScenes?: Record<string, unknown>;
 }
 
-type ViewType = "chat" | "script" | "storyboard" | "roles" | "costumes" | "scenes" | "props" | "optimize" | "redline"; 
+type ViewType = "chat" | "create" | "script" | "storyboard" | "roles" | "costumes" | "scenes" | "props" | "optimize" | "score"; 
 
 // === 提取项接口 ===
 interface ExtractedItem {
@@ -139,7 +152,35 @@ export default function ScriptDetailPage() {
   const id = params.id as string;
   
   // 从 URL 参数读取视图状态，刷新后保持当前视图
-  const [activeView, setActiveView] = useState<ViewType>("script");
+  const getInitialView = (): ViewType => {
+    const viewParam = searchParams.get('view');
+    if (viewParam && ['script', 'storyboard', 'characters', 'costumes', 'scenes', 'props', 'chat', 'create', 'optimize', 'score'].includes(viewParam)) {
+      return viewParam as ViewType;
+    }
+    return 'script';
+  };
+  const [activeView, setActiveViewState] = useState<ViewType>(getInitialView);
+  
+  // 包装 setActiveView，同步更新 URL 参数
+  const setActiveView = (view: ViewType) => {
+    setActiveViewState(view);
+    // 更新 URL 参数，保持视图状态
+    const currentView = searchParams.get('view');
+    if (currentView !== view) {
+      const newUrl = view === 'script' 
+        ? `/scripts/${id}` 
+        : `/scripts/${id}?view=${view}`;
+      router.replace(newUrl, { scroll: false });
+    }
+  };
+  
+  // 当视图切换到 chat 或 create 时，记住最后的 AI 创作子视图
+  useEffect(() => {
+    if (activeView === 'chat' || activeView === 'create') {
+      setAiCreateSubView(activeView);
+    }
+  }, [activeView]);
+  
   const [showDelete, setShowDelete] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [script, setScript] = useState<ScriptDetail | null>(null);
@@ -149,7 +190,20 @@ export default function ScriptDetailPage() {
   const [editContent, setEditContent] = useState("");
   const [aiGeneratedContent, setAiGeneratedContent] = useState("");
   const [contentVersion, setContentVersion] = useState<'manual' | 'ai'>('manual');
+  
+  // 续写状态
+  const [generatedEpisodes, setGeneratedEpisodes] = useState(0); // 已生成集数
+  const [totalEpisodes, setTotalEpisodes] = useState(0); // 目标集数
+  const [episodesPerWrite, setEpisodesPerWrite] = useState(3); // 每次续写集数（建议1-5，最多10）
+  const [cachedOutline, setCachedOutline] = useState<unknown>(null); // 缓存大纲
+  const [cachedCoreDialogue, setCachedCoreDialogue] = useState<unknown>(null); // 缓存核心对话
+  // 创作模式状态（影响每集字数）
+  const [creativeMode, setCreativeMode] = useState<'short' | 'medium' | 'long'>('short'); // 默认短剧
+  // AI创作模块子视图状态（记住用户最后在 AI对话/创意生成 哪个界面）
+  const [aiCreateSubView, setAiCreateSubView] = useState<'chat' | 'create'>('chat');
   const [isSaving, setIsSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false); // 跟踪未保存的更改
+  const initialContentRef = useRef<{title: string; synopsis: string; content: string} | null>(null); // 保存初始内容用于比较
   const [isSplitting, setIsSplitting] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -194,13 +248,19 @@ export default function ScriptDetailPage() {
   
   // 实时统计信息（基于当前编辑内容）
   const liveStats = useMemo(() => {
-    const currentContent = contentVersion === 'ai' && aiGeneratedContent ? aiGeneratedContent : editContent;
+    // 两套系统独立，统计只基于 editContent
+    const currentContent = editContent;
     if (!currentContent) return { wordCount: 0, sceneCount: 0 };
     const wordCount = currentContent.replace(/\s/g, '').length;
-    const sceneMatches = currentContent.match(/场景|第[一二三四五六七八九十\d]+场|内景|外景|INT\.?|EXT\.?/gi);
-    const sceneCount = sceneMatches ? new Set(sceneMatches).size : 0;
+    // 增强场景匹配：支持多种格式
+    // 1. [场景1]、【场景1】、场景1、场景：xxx、第1场
+    // 2. 内景/外景、INT./EXT.
+    // 3. 数字-数字格式：1-1、1-2、2-1（集数-场景数，独立一行）
+    const sceneMatches = currentContent.match(/(?:\[|【|（)?场景[\s：:]*[\d一二三四五六七八九十]*\s*(?:】|\]|）)?|第[\d一二三四五六七八九十]+场|内景|外景|INT\.?|EXT\.?|^\d+-\d+$/gim);
+    // 直接统计所有场景数，不去重（多集可能有相同的场景编号，应分别统计）
+    const sceneCount = sceneMatches ? sceneMatches.length : 0;
     return { wordCount, sceneCount };
-  }, [editContent, aiGeneratedContent, contentVersion]);
+  }, [editContent]);
 
   // 从 URL 参数初始化视图状态（支持分享链接）
   useEffect(() => {
@@ -215,6 +275,49 @@ export default function ScriptDetailPage() {
     const newUrl = `${window.location.pathname}?view=${activeView}`;
     router.replace(newUrl, { scroll: false });
   }, [activeView, router]);
+
+  // 检测未保存的更改
+  useEffect(() => {
+    if (!initialContentRef.current) return;
+    // 两套系统独立，只检测 editContent 的变化
+    const hasChanges = 
+      editTitle !== initialContentRef.current.title ||
+      editSynopsis !== initialContentRef.current.synopsis ||
+      editContent !== initialContentRef.current.content;
+    setIsDirty(Boolean(hasChanges));
+  }, [editTitle, editSynopsis, editContent]);
+
+  // 页面离开警告
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '您有未保存的内容，确定要离开吗？';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  // 浏览器后退拦截
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        if (window.confirm('您有未保存的内容，确定要离开吗？')) {
+          // 用户确认，允许后退
+          window.removeEventListener('popstate', handlePopState);
+          router.back();
+        } else {
+          // 用户取消，推回历史记录保持当前页面
+          window.history.pushState(null, '', window.location.href);
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isDirty, router]);
 
   // 当 activeView 切换时，自动检查已有数据并显示
   useEffect(() => {
@@ -248,9 +351,17 @@ export default function ScriptDetailPage() {
   
   // 剧本生成状态
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+  const [isContinuing, setIsContinuing] = useState(false); // 单独的续写状态
   const [scriptIdea, setScriptIdea] = useState('');
-  const [targetEpisodes, setTargetEpisodes] = useState(24);
+  const [targetEpisodes, setTargetEpisodes] = useState(1);
   const [generatedOutline, setGeneratedOutline] = useState<Record<string, unknown> | null>(null);
+  
+  // 离开确认对话框状态
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
+  const [leaveDialogType, setLeaveDialogType] = useState<'ai' | 'dirty'>('dirty');
+  
+  // AbortController 用于取消生成请求
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // P2-8: 三阶段进度状态
   const [generationStage, setGenerationStage] = useState<{ id: number; name: string; status: string }>({ id: 1, name: '核心对话生成', status: 'waiting' });
@@ -388,6 +499,10 @@ export default function ScriptDetailPage() {
         }),
       });
       
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`请求失败: ${res.status} ${errorText}`);
+      }
       const reader = res.body?.getReader();
       if (!reader) throw new Error('无法读取响应');
       
@@ -514,7 +629,8 @@ export default function ScriptDetailPage() {
       
       const res = await apiFetch('/api/ai/analyze-episodes', {
         method: 'POST',
-        body: JSON.stringify({ scriptId: id, content: script.content }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scriptContent: script.content }),
       });
       
       const data = await res.json();
@@ -678,6 +794,26 @@ export default function ScriptDetailPage() {
           setEditTitle(d.title);
           setEditSynopsis(d.synopsis || "");
           setEditContent(d.content || "");
+          // 恢复 AI 生成的大纲和内容
+          if (d.outline) {
+            try {
+              const parsedOutline = typeof d.outline === 'string' ? JSON.parse(d.outline) : d.outline;
+              setGeneratedOutline(parsedOutline);
+            } catch {
+              // 如果解析失败，尝试作为纯文本使用
+              setGeneratedOutline({ rawText: d.outline });
+            }
+          }
+          if (d.aiContent) {
+            setAiGeneratedContent(d.aiContent);
+          }
+          // 初始化原始内容引用，用于检测未保存的更改
+          initialContentRef.current = {
+            title: d.title,
+            synopsis: d.synopsis || "",
+            content: d.content || ""
+          };
+          setIsDirty(false);
           // 恢复服装、道具、场景数据
           if (d.costumes && Object.keys(d.costumes).length > 0) {
             setCostumeByEpisode(d.costumes);
@@ -707,22 +843,126 @@ export default function ScriptDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // 根据总内容自动分片
+  // 根据总内容自动分片（优先按集数标记分割）
   const autoSplitContent = useCallback(() => {
     if (!editContent || !script?.episodeCount) return;
     
     const totalEpisodes = script.episodeCount;
-    const lines = editContent.split('\n');
-    const totalLines = lines.length;
-    const linesPerEpisode = Math.ceil(totalLines / totalEpisodes);
-    
     const map: Record<number, string> = {};
-    for (let i = 0; i < totalEpisodes; i++) {
-      const startLine = i * linesPerEpisode;
-      const endLine = Math.min((i + 1) * linesPerEpisode, totalLines);
-      map[i + 1] = lines.slice(startLine, endLine).join('\n');
+    
+    // 尝试按集数标记分割（支持多种格式）
+    const episodePatterns = [
+      // 书名号格式
+      /【第\s*(\d+)\s*集】[：:：\s]*(.*)$/gm,     // 【第1集】标题
+      /【第\s*(\d+)\s*话】[：:：\s]*(.*)$/gm,     // 【第1话】标题
+      /【第\s*(\d+)\s*章】[：:：\s]*(.*)$/gm,     // 【第1章】标题
+      // 方括号格式
+      /\[第\s*(\d+)\s*集\][：:：\s]*(.*)$/gm,     // [第1集]标题
+      /\[EP\s*0*(\d+)\][：:：\s]*(.*)$/gim,       // [EP01]标题
+      // 简单格式
+      /^第\s*(\d+)\s*集$/gm,                      // 第1集
+      /^第\s*(\d+)\s*话$/gm,                      // 第1话
+      /^第\s*(\d+)\s*章$/gm,                      // 第1章
+      // 带标题格式
+      /第\s*(\d+)\s*集[：:：\s]+(.*)$/gm,         // 第1集：标题
+      /第\s*(\d+)\s*话[：:：\s]+(.*)$/gm,         // 第1话：标题
+      /第\s*(\d+)\s*章[：:：\s]+(.*)$/gm,         // 第1章：标题
+      // 英文格式
+      /^EPISODE\s*(\d+)[：:：\s]*(.*)$/gim,       // EPISODE 1
+      /^Episode\s*(\d+)[：:：\s]*(.*)$/gim,       // Episode 1
+      /^EP\s*0*(\d+)[：:：\s]*(.*)$/gim,          // EP01
+      /^E\s*(\d+)[：:：\s]*(.*)$/gim,             // E1
+      // 数字序号
+      /^(\d+)[\.．]\s*(.*)$/gm,                   // 1. 标题
+      /^#(\d+)[：:：\s]*(.*)$/gm,                 // #1 标题
+    ];
+    
+    // 首先找到剧本正文起始位置（跳过项目简介、大纲、人物小传等）
+    const contentStartPatterns = [
+      /【剧本正文】[：:]*\s*/g,
+      /【正文】[：:]*\s*/g,
+      /剧本正文[：:：]*\s*/g,
+      /---\s*正文\s*---\s*/g,
+      /===\s*正文\s*===\s*/g,
+      /SCRIPT\s*[:：]*\s*/gi,
+    ];
+    
+    let contentStartIndex = 0;
+    for (const pattern of contentStartPatterns) {
+      const match = pattern.exec(editContent);
+      if (match) {
+        contentStartIndex = match.index + match[0].length;
+        break;
+      }
     }
+    
+    // 跳过正文标记后的空行
+    while (contentStartIndex < editContent.length && 
+           (editContent[contentStartIndex] === '\n' || editContent[contentStartIndex] === '\r')) {
+      contentStartIndex++;
+    }
+    
+    const actualContent = editContent.slice(contentStartIndex);
+    
+    // 收集所有集数标记
+    const episodeMarkers: { episode: number; index: number; title: string }[] = [];
+    
+    for (const pattern of episodePatterns) {
+      let match;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(actualContent)) !== null) {
+        const episode = parseInt(match[1], 10);
+        // 检查是否已存在该集的标记（避免重复）
+        if (!episodeMarkers.some(m => m.episode === episode)) {
+          episodeMarkers.push({
+            episode,
+            index: match.index,
+            title: match[2]?.trim() || ''
+          });
+        }
+      }
+    }
+    
+    // 按位置排序
+    episodeMarkers.sort((a, b) => a.index - b.index);
+    
+    console.log('[自动分集] 找到的集数标记:', episodeMarkers.map(m => `第${m.episode}集`));
+    
+    if (episodeMarkers.length >= 1) {
+      // 使用集数标记分割
+      for (let i = 0; i < episodeMarkers.length; i++) {
+        const current = episodeMarkers[i];
+        const next = episodeMarkers[i + 1];
+        
+        const startIndex = current.index;
+        const endIndex = next ? next.index : actualContent.length;
+        
+        const episodeContent = actualContent.slice(startIndex, endIndex).trim();
+        map[current.episode] = episodeContent;
+      }
+      
+      // 如果识别到的集数少于目标集数，用空内容填充剩余集
+      for (let i = 1; i <= totalEpisodes; i++) {
+        if (!map[i]) {
+          map[i] = '';
+        }
+      }
+    } else {
+      // 回退：按行数平均分配
+      console.log('[自动分集] 未找到集数标记，使用行数平均分配');
+      const lines = editContent.split('\n');
+      const totalLines = lines.length;
+      const linesPerEpisode = Math.ceil(totalLines / totalEpisodes);
+      
+      for (let i = 0; i < totalEpisodes; i++) {
+        const startLine = i * linesPerEpisode;
+        const endLine = Math.min((i + 1) * linesPerEpisode, totalLines);
+        map[i + 1] = lines.slice(startLine, endLine).join('\n');
+      }
+    }
+    
     setEpisodeContentMap(map);
+    console.log('[自动分集] 分割完成，共', Object.keys(map).length, '集');
   }, [editContent, script?.episodeCount]);
 
   // 内容变化时自动重新分片
@@ -789,6 +1029,13 @@ export default function ScriptDetailPage() {
             : null
         );
         toast.success("保存成功");
+        // 保存成功后重置未保存状态
+        initialContentRef.current = {
+          title: editTitle,
+          synopsis: editSynopsis,
+          content: editContent
+        };
+        setIsDirty(false);
       } else {
         toast.error(data.error || "保存失败");
       }
@@ -823,17 +1070,36 @@ export default function ScriptDetailPage() {
         setUploadProgress('正在解析文档...');
         const formData = new FormData();
         formData.append("file", file);
-        const res = await apiFetch("/api/parse-document", { method: "POST", body: formData });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || "文件解析失败");
+        
+        // 添加 60 秒超时机制
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        
+        try {
+          const res = await apiFetch("/api/parse-document", { 
+            method: "POST", 
+            body: formData,
+            signal: controller.signal 
+          });
+          clearTimeout(timeoutId);
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            throw new Error(data.error || "文件解析失败");
+          }
+          text = data.content;
+        } catch (fetchErr) {
+          clearTimeout(timeoutId);
+          if (fetchErr instanceof Error && fetchErr.name === 'AbortError') {
+            throw new Error("文档解析超时（60秒），建议将内容复制到 txt 文件后上传");
+          }
+          throw fetchErr;
         }
-        text = data.content;
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "文件读取失败");
       e.target.value = "";
       setIsUploading(false);
+      setUploadProgress('');
       return;
     }
     
@@ -850,12 +1116,16 @@ export default function ScriptDetailPage() {
       
       // Auto-analyze stats
       const wordCount = text.replace(/\s/g, "").length;
-      const sceneMatches = text.match(/场景|第[一二三四五六七八九十\d]+场|内景|外景|INT\.?|EXT\.?/gi);
-      const sceneCount = sceneMatches ? new Set(sceneMatches).size : Math.max(1, Math.ceil(text.length / 2000));
+      // 增强场景匹配：支持多种格式，包括数字-数字格式（1-1、1-2等）
+      const sceneMatches = text.match(/(?:\[|【|（)?场景[\s：:]*[\d一二三四五六七八九十]*\s*(?:】|\]|）)?|第[\d一二三四五六七八九十]+场|内景|外景|INT\.?|EXT\.?|^\d+-\d+$/gim);
+      // 直接统计所有场景数，不去重
+      const sceneCount = sceneMatches ? sceneMatches.length : 0;
+      const sceneRecognized = sceneMatches && sceneMatches.length > 0;
       
       // 分析集数
       let episodeCount = 0;
       let episodeData: EpisodeInfo[] = [];
+      let episodeRecognized = false;
       
       try {
         const analyzeRes = await apiFetch('/api/ai/analyze-episodes', {
@@ -872,18 +1142,78 @@ export default function ScriptDetailPage() {
                             analyzeData.method === 'ai_batch' ? `AI分批分析(${analyzeData.batchCount || 1}批)` : 
                             analyzeData.method === 'estimated' ? '字数估算' : 'AI分析';
           toast.success(`剧本上传成功，已识别 ${episodeCount} 集 (${methodText})`);
+          
+          // 如果不是正则识别且集数>1，显示警告提示（可能不是真正的剧本分集）
+          if (analyzeData.method !== 'regex' && episodeCount > 1) {
+            setTimeout(() => {
+              toast.warning(
+                `未检测到有效的集数标记，已自动分为 ${episodeCount} 集。\n\n如需精确分集，请在剧本中添加集数标记：\n• 【第1集】或第1集\n• Episode 1 或 EP01`,
+                { duration: 6000 }
+              );
+            }, 500);
+          }
+          episodeRecognized = true;
         } else {
           throw new Error('分析结果为空');
         }
       } catch {
-        // 分析失败时使用字数估算
-        episodeCount = Math.max(1, Math.ceil(wordCount / 15000));
-        toast.warning(`AI分析失败，已按字数估算 ${episodeCount} 集`);
+        // 识别失败
+        episodeRecognized = false;
+        episodeCount = 1; // 设置为1集，整个内容显示在编辑框
       }
       
+      // 综合提示识别结果
+      const issues: string[] = [];
+      if (!episodeRecognized) {
+        issues.push('剧集分隔标记');
+      }
+      if (!sceneRecognized) {
+        issues.push('场景标记');
+      }
+      
+      if (issues.length > 0) {
+        // 有识别失败的情况，弹窗提示
+        const issueText = issues.join('、');
+        const tips: string[] = [];
+        
+        if (!episodeRecognized) {
+          tips.push('剧集格式建议：\n  • 每集以"第X集"开头\n  • 或使用【第X集】格式\n  • 或使用 EP01、Episode 1');
+        }
+        if (!sceneRecognized) {
+          tips.push('场景格式建议：\n  • [场景1] 或 【场景1】\n  • 1-1、1-2（集数-场景数）\n  • 内景/外景 或 INT./EXT.');
+        }
+        
+        toast.warning(
+          `未能识别到${issueText}，已将全部内容显示在编辑框。\n\n${tips.join('\n\n')}`,
+          { duration: 8000 }
+        );
+      }
+      
+      // 先填充 episodeContentMap，再更新 episodeCount，避免 UI 显示空白
+      // 如果识别成功且有多集，立即分片
+      if (episodeRecognized && episodeCount > 1) {
+        // 同步执行分片逻辑，不使用 setTimeout
+        const map: Record<number, string> = {};
+        const lines = text.split('\n');
+        const totalLines = lines.length;
+        const linesPerEpisode = Math.ceil(totalLines / episodeCount);
+        
+        for (let i = 0; i < episodeCount; i++) {
+          const startLine = i * linesPerEpisode;
+          const endLine = Math.min((i + 1) * linesPerEpisode, totalLines);
+          map[i + 1] = lines.slice(startLine, endLine).join('\n');
+        }
+        setEpisodeContentMap(map);
+        console.log('[上传分片] 立即分片完成，共', Object.keys(map).length, '集');
+      } else {
+        // 单集情况，清空分片 map
+        setEpisodeContentMap({});
+      }
+      
+      // 然后再更新 script 状态（触发 UI 更新）
       setScript((prev) =>
         prev
-          ? { ...prev, content: text, wordCount: wordCount, sceneCount: sceneCount, episodeCount: episodeCount }
+          ? { ...prev, content: text, wordCount: wordCount, sceneCount: sceneCount || 1, episodeCount: episodeCount }
           : prev
       );
       
@@ -898,13 +1228,6 @@ export default function ScriptDetailPage() {
         /* ignore backend stats update failure */
       }
       
-      // 上传成功后自动分片
-      if (episodeCount > 1) {
-        setTimeout(() => {
-          autoSplitContent();
-        }, 100);
-      }
-      
     } catch (error) {
       console.error('保存失败:', error);
       toast.error('剧本保存失败');
@@ -915,8 +1238,32 @@ export default function ScriptDetailPage() {
     }
   };
 
+  // 根据创作模式计算每集字数
+  // 短剧：60-90秒/集 ≈ 400字
+  // 中剧：2-3分钟/集 ≈ 1000字
+  // 长剧：5-8分钟/集 ≈ 2000字
+  const getTargetWordsByMode = (mode: 'short' | 'medium' | 'long'): number => {
+    switch (mode) {
+      case 'short': return 400;   // 短剧：60-90秒/集
+      case 'medium': return 1000; // 中剧：2-3分钟/集
+      case 'long': return 2000;   // 长剧：5-8分钟/集
+      default: return 400;
+    }
+  };
+
+  // 取消生成
+  const handleCancelGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsGeneratingScript(false);
+      setStageProgress(null);
+      toast.info('已取消生成');
+    }
+  };
+
   // 从创意生成完整剧本
-  const handleGenerateFullScript = async () => {
+  const handleGenerateFullScript = async (model?: string) => {
     if (!scriptIdea.trim()) {
       toast.error('请输入剧本创意或大纲');
       return;
@@ -925,7 +1272,14 @@ export default function ScriptDetailPage() {
     setIsGeneratingScript(true);
     setGeneratedOutline(null);
     setAiGeneratedContent('');
-    setContentVersion('ai');
+    // 不自动设置 contentVersion 为 'ai'
+    // 用户需要手动点击"应用到剧本"才会跳转到剧本编辑界面并填充内容
+
+    // 创建 AbortController 用于取消请求
+    abortControllerRef.current = new AbortController();
+
+    // 根据创作模式计算字数
+    const targetWords = getTargetWordsByMode(creativeMode);
 
     try {
       const res = await fetch('/api/ai/generate-full-script', {
@@ -934,23 +1288,42 @@ export default function ScriptDetailPage() {
         body: JSON.stringify({
           idea: scriptIdea,
           targetEpisodes: targetEpisodes,
+          targetWords: targetWords,
+          creativeMode: creativeMode,
           genre: script?.genre,
           style: '甜宠',
+          model: model || 'deepseek-v4-pro', // 使用用户选择的模型，默认 deepseek-v4-pro
         }),
+        signal: abortControllerRef.current.signal, // 添加取消信号
       });
+
+      // 检查响应状态
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('[生成错误] 响应失败', { 
+          status: res.status, 
+          statusText: res.statusText,
+          errorText: errorText.slice(0, 500) 
+        });
+        throw new Error(`请求失败: ${res.status} ${res.statusText}`);
+      }
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error('无法读取响应');
 
       const decoder = new TextDecoder();
       let fullScript = '';
+      let buffer = ''; // SSE 缓冲区，处理跨 chunk 的 JSON 截断
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const text = decoder.decode(value);
-        const lines = text.split('\n');
+        buffer += text;
+        const lines = buffer.split('\n');
+        // 保留最后一个不完整的行（可能被截断）
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -965,50 +1338,170 @@ export default function ScriptDetailPage() {
                   output: data.output || '',
                   detail: data.detail,
                 });
-              } else if (data.type === 'progress') {
-                if (data.content) {
-                  fullScript += data.content;
-                  setAiGeneratedContent(fullScript);
-                }
-                if (data.message) {
-                  setAnalyzeProgress(data.message);
-                }
-                if (data.stage === 'outline_complete' && data.data) {
+              } else if (data.type === 'stage_complete') {
+                // 【新增】阶段完成事件：处理大纲完成
+                if (data.stage === 2 && data.data) {
+                  // 第二阶段（完整大纲）完成，立即显示在大纲编辑框
+                  console.log('[生成] 大纲阶段完成', { 
+                    hasOutline: !!data.data,
+                    title: data.data?.title,
+                    genre: data.data?.genre,
+                    logline: data.data?.logline?.substring?.(0, 50),
+                    episodeCount: data.data?.episodes?.length,
+                    mainCharacterCount: data.data?.mainCharacters?.length,
+                    villainCount: data.data?.villains?.length,
+                    // 打印所有键名，确认数据完整性
+                    keys: Object.keys(data.data),
+                  });
                   setGeneratedOutline(data.data);
+                  setCachedOutline(data.data);
+                  // 同时设置进度，让用户知道大纲已完成
+                  setStageProgress({
+                    stage: 2,
+                    name: '完整大纲',
+                    output: '大纲生成完成，准备撰写剧集...',
+                  });
+                } else if (data.stage === 1 && data.data) {
+                  // 第一阶段（核心对话）完成，缓存核心对话
+                  setCachedCoreDialogue(data.data);
                 }
-              } else if (data.type === 'complete') {
-                if (data.data?.script) {
-                  setAiGeneratedContent(data.data.script);
-                  const newEpisodeCount = data.data.generatedEpisodes;
-                  const newTitle = data.data.title;
-                  setScript((prev) => prev ? {
-                    ...prev,
-                    episodeCount: newEpisodeCount,
-                    title: newTitle || prev.title,
-                  } : prev);
-                  
-                  // 自动保存到数据库
-                  try {
-                    await apiFetch(`/api/scripts/${id}`, {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        title: newTitle || script?.title,
-                        content: data.data.script,
-                        episodeCount: newEpisodeCount,
-                        genre: script?.genre,
-                        status: 'draft',
-                      }),
-                    });
-                    toast.success('剧本已自动保存');
-                  } catch (saveError) {
-                    console.error('自动保存失败:', saveError);
-                    toast.error('剧本保存失败，请手动保存');
+              } else if (data.type === 'validation_warning') {
+                // 【新增】大纲一致性检查警告
+                console.log('[大纲一致性检查]', data.message, data.issues);
+                // 显示提示给用户
+                setStageProgress({
+                  stage: data.stage || 2,
+                  name: '大纲验证',
+                  output: data.message || '大纲一致性检查完成',
+                  detail: data.issues?.map((issue: { description: string }) => issue.description).join('\n'),
+                });
+              } else if (data.type === 'progress') {
+                // 更新进度状态（包括集数进度）
+                if (data.episode) {
+                  // 正在撰写第N集
+                  setStageProgress({
+                    stage: 3,
+                    name: '逐集撰写',
+                    output: `正在撰写第${data.episode}集...`,
+                    detail: data.message,
+                  });
+                } else if (data.stage === 'outline') {
+                  // 大纲生成中
+                  setStageProgress({
+                    stage: 2,
+                    name: '完整大纲',
+                    output: data.message || '正在生成完整大纲...',
+                  });
+                } else if (data.stage === 'dialogue') {
+                  // 核心对话生成中
+                  setStageProgress({
+                    stage: 1,
+                    name: '核心对话',
+                    output: data.message || '正在生成核心对话...',
+                  });
+                }
+                
+                // 流式输出：累积内容并实时显示
+                if (data.content) {
+                  fullScript += data.content;  // 累积到 fullScript
+                  const cleanedPartial = cleanAiOutput(fullScript);
+                  if (cleanedPartial && cleanedPartial.length > 0) {
+                    setAiGeneratedContent(cleanedPartial);
+                  } else {
+                    setAiGeneratedContent(fullScript);
                   }
                 }
-                // 三阶段进度：标记所有阶段完成（stage=3 表示第三阶段已完成）
+              } else if (data.type === 'episode_complete' && data.script) {
+                // episode_complete：格式化显示，不再重复累积（progress 已累积）
+                const cleanedPartial = cleanAiOutput(fullScript);
+                setAiGeneratedContent(cleanedPartial || fullScript);
+                console.log('[生成] 单集完成', { episode: data.episode, contentLength: fullScript.length });
+              } else if (data.type === 'complete') {
+                // complete 阶段拿到完整数据，一次性清洗和解析
+                const rawScript = data.data?.script || fullScript;
+                const cleaned = cleanAiOutput(rawScript);
+                
+                // 【重要】先缓存大纲和核心对话，确保续写功能可用
+                if (data.data?.outline) {
+                  setCachedOutline(data.data.outline);
+                }
+                if (data.data?.coreDialogue) {
+                  setCachedCoreDialogue(data.data.coreDialogue);
+                }
+                // 同时更新 generatedOutline（用于显示）
+                if (data.data?.outline) {
+                  setGeneratedOutline(data.data.outline as Record<string, unknown>);
+                }
+                
+                // 尝试解析 JSON
+                const parsed = safeJsonParse(cleaned);
+                
+                if (parsed && isScriptJson(parsed)) {
+                  // 是结构化 JSON → 格式化文本
+                  const formattedText = formatScriptJsonToText(parsed as Record<string, unknown>);
+                  // 只设置 aiGeneratedContent，不自动填充到 editContent
+                  // 用户需要手动点击"应用到剧本"才会跳转并填充
+                  setAiGeneratedContent(formattedText);
+                } else {
+                  // 纯文本 → 只设置 aiGeneratedContent
+                  setAiGeneratedContent(cleaned);
+                }
+                
+                // 【修复】移除 data.data?.script 条件，只要有数据就更新
+                const newGeneratedEpisodes = data.data?.generatedEpisodes || 0;
+                const newTotalEpisodes = data.data?.totalEpisodes || targetEpisodes;
+                const newTitle = data.data?.title;
+                    
+                    const scriptText = parsed && isScriptJson(parsed) 
+                      ? formatScriptJsonToText(parsed as Record<string, unknown>)
+                      : cleaned;
+                    const wordCount = scriptText.replace(/\s/g, '').length;
+                    
+                    // ✅ 支持带方括号、书名号等括号的场景标记，以及数字-数字格式
+                    const sceneMatches = scriptText.match(/(?:\[|【|（)?场景[\s：:]*[\d一二三四五六七八九十]*\s*(?:】|\]|）)?|第[\d一二三四五六七八九十]+场|内景|外景|INT\.?|EXT\.?|^\d+-\d+$/gim);
+                    // 直接统计所有场景数，不去重
+                    const sceneCount = sceneMatches ? sceneMatches.length : 0;
+                    
+                    setGeneratedEpisodes(newGeneratedEpisodes);
+                    setTotalEpisodes(newTotalEpisodes);
+                    setCachedOutline(data.data.outline);
+                    setCachedCoreDialogue(data.data.coreDialogue);
+                    
+                    setScript((prev) => prev ? {
+                      ...prev,
+                      episodeCount: newGeneratedEpisodes,
+                      wordCount: wordCount,
+                      sceneCount: sceneCount,
+                      title: newTitle || prev.title,
+                    } : prev);
+                    
+                    // 【自动持久化】生成完成后自动保存大纲和剧本输出到数据库
+                    // 避免用户切换页面时数据丢失
+                    const outlineToSave = data.data?.outline || generatedOutline;
+                    const contentToSave = parsed && isScriptJson(parsed) 
+                      ? formatScriptJsonToText(parsed as Record<string, unknown>)
+                      : cleaned;
+                    
+                    // 静默保存，不显示成功提示（避免干扰用户）
+                    try {
+                      await apiFetch(`/api/scripts/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          title: newTitle || script?.title || editTitle,
+                          synopsis: editSynopsis || script?.synopsis || "",
+                          content: editContent || script?.content || "",
+                          outline: outlineToSave,
+                          aiContent: contentToSave,
+                        }),
+                      });
+                      console.log("[自动保存] 剧本大纲和输出已持久化");
+                    } catch (saveError) {
+                      console.error("[自动保存失败]", saveError);
+                      // 不显示错误提示，避免干扰用户
+                    }
                 setStageProgress({ stage: 3, name: '完成', output: '剧本生成完成' });
-                toast.success('剧本生成完成');
+                toast.success('剧本生成完成，点击"应用到剧本"继续');
               } else if (data.type === 'error') {
                 toast.error(data.message);
               }
@@ -1017,10 +1510,98 @@ export default function ScriptDetailPage() {
             }
           }
         }
+        
+        // 【修复】处理 buffer 中剩余的最后一行数据
+        // 当流结束时，buffer 可能还包含最后一条完整的 SSE 消息
+        if (buffer.trim().startsWith('data: ')) {
+          try {
+            const data = JSON.parse(buffer.trim().slice(6));
+            if (data.type === 'complete') {
+              // 处理 complete 事件
+              const rawScript = data.data?.script || fullScript;
+              const cleaned = cleanAiOutput(rawScript);
+              
+              if (data.data?.outline) {
+                setCachedOutline(data.data.outline);
+                setGeneratedOutline(data.data.outline as Record<string, unknown>);
+              }
+              if (data.data?.coreDialogue) {
+                setCachedCoreDialogue(data.data.coreDialogue);
+              }
+              
+              const parsed = safeJsonParse(cleaned);
+              
+              if (parsed && isScriptJson(parsed)) {
+                const formattedText = formatScriptJsonToText(parsed as Record<string, unknown>);
+                setAiGeneratedContent(formattedText);
+              } else {
+                setAiGeneratedContent(cleaned);
+              }
+              
+              const newGeneratedEpisodes = data.data?.generatedEpisodes || 0;
+              const newTotalEpisodes = data.data?.totalEpisodes || targetEpisodes;
+              const newTitle = data.data?.title;
+              
+              const scriptText = parsed && isScriptJson(parsed) 
+                ? formatScriptJsonToText(parsed as Record<string, unknown>)
+                : cleaned;
+              const wordCount = scriptText.replace(/\s/g, '').length;
+              
+              const sceneMatches = scriptText.match(/(?:\[|【|（)?场景[\s：:]*[\d一二三四五六七八九十]*\s*(?:】|\]|）)?|第[\d一二三四五六七八九十]+场|内景|外景|INT\.?|EXT\.?|^\d+-\d+$/gim);
+              const sceneCount = sceneMatches ? sceneMatches.length : 0;
+              
+              setGeneratedEpisodes(newGeneratedEpisodes);
+              setTotalEpisodes(newTotalEpisodes);
+              setCachedOutline(data.data.outline);
+              setCachedCoreDialogue(data.data.coreDialogue);
+              
+              setScript((prev) => prev ? {
+                ...prev,
+                episodeCount: newGeneratedEpisodes,
+                wordCount: wordCount,
+                sceneCount: sceneCount,
+                title: newTitle || prev.title,
+              } : prev);
+              
+              // 自动持久化
+              const outlineToSave = data.data?.outline || generatedOutline;
+              const contentToSave = parsed && isScriptJson(parsed) 
+                ? formatScriptJsonToText(parsed as Record<string, unknown>)
+                : cleaned;
+              
+              try {
+                await apiFetch(`/api/scripts/${id}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    title: newTitle || script?.title || editTitle,
+                    synopsis: editSynopsis || script?.synopsis || "",
+                    content: editContent || script?.content || "",
+                    outline: outlineToSave,
+                    aiContent: contentToSave,
+                  }),
+                });
+              } catch {
+                // 静默保存失败
+              }
+              
+              setStageProgress({ stage: 3, name: '完成', output: '剧本生成完成' });
+              toast.success('剧本生成完成，点击"应用到剧本"继续');
+            }
+          } catch {
+            // buffer 数据解析失败，忽略
+          }
+        }
       }
     } catch (error) {
-      console.error('生成失败:', error);
-      toast.error('剧本生成失败');
+      // 检查是否是用户取消的请求
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('生成已取消');
+        toast.info('生成已取消');
+      } else {
+        console.error('生成失败:', error);
+        toast.error('剧本生成失败');
+      }
     } finally {
       setIsGeneratingScript(false);
       setAnalyzeProgress('');
@@ -1032,6 +1613,254 @@ export default function ScriptDetailPage() {
         setStageProgress(null);
         stageProgressTimerRef.current = null;
       }, 3000);
+    }
+  };
+
+  // 续写剧本
+  const handleContinueWriting = async (episodesToWrite: number = 3, model?: string) => {
+    // 【修复】续写时计算实际要生成的集数
+    // 允许用户续写超过原定目标集数
+    const newTotalEpisodes = Math.max(totalEpisodes, generatedEpisodes + episodesToWrite);
+    const actualEpisodesToWrite = Math.min(episodesToWrite, 10);
+    
+    // 更新总目标集数
+    if (newTotalEpisodes > totalEpisodes) {
+      console.log('[续写] 更新目标总集数', { from: totalEpisodes, to: newTotalEpisodes });
+      setTotalEpisodes(newTotalEpisodes);
+    }
+    
+    // 【修复】获取大纲，优先使用 cachedOutline，其次 generatedOutline
+    const rawOutline = cachedOutline || generatedOutline;
+    
+    // 【修复】确保大纲是有效字符串
+    let outlineToUse: string;
+    if (typeof rawOutline === 'string' && rawOutline.trim().length > 0) {
+      outlineToUse = rawOutline;
+    } else if (rawOutline && typeof rawOutline === 'object') {
+      // 可能是结构化大纲，转为 JSON 字符串
+      outlineToUse = JSON.stringify(rawOutline);
+      console.log('[续写] 大纲从对象转为字符串', { length: outlineToUse.length });
+    } else {
+      console.error('[续写错误] 没有可用的大纲', { 
+        cachedOutline, 
+        generatedOutline,
+        cachedOutlineType: typeof cachedOutline,
+        generatedOutlineType: typeof generatedOutline,
+      });
+      toast.error('没有可用的大纲，请先点击"生成完整剧本"');
+      return;
+    }
+    
+    // 【修复】允许续写更多集，即使已达到原定目标
+    // 用户可以随时续写，不受原 totalEpisodes 限制
+
+    setIsContinuing(true);
+    toast.info(`开始续写 ${actualEpisodesToWrite} 集...`);
+    
+    // 【日志】记录续写请求参数
+    console.log('[续写开始]', {
+      actualEpisodesToWrite,
+      generatedEpisodes,
+      totalEpisodes,
+      hasOutline: true,
+      hasCoreDialogue: !!cachedCoreDialogue,
+      outlineLength: outlineToUse.length,
+      outlinePreview: outlineToUse.slice(0, 100),
+    });
+    
+    try {
+      // 【修复】先从实际内容中计算已有集数，作为备用验证
+      const actualEpisodeCount = (() => {
+        // 匹配分隔线格式：════...【第N集】...
+        const separatorMatches = aiGeneratedContent.match(/══════════════════════════════\n【第\d+集】/g);
+        if (separatorMatches && separatorMatches.length > 0) {
+          return separatorMatches.length;
+        }
+        // 备用：匹配【第N集】格式
+        const simpleMatches = aiGeneratedContent.match(/【第\d+集】/g);
+        if (simpleMatches && simpleMatches.length > 0) {
+          return simpleMatches.length;
+        }
+        return generatedEpisodes; // 使用状态值
+      })();
+      
+      // 【日志】对比状态值和实际值
+      console.log('[续写] 集数校验', {
+        stateGeneratedEpisodes: generatedEpisodes,
+        actualEpisodeCount,
+        willUse: actualEpisodeCount,
+        mismatch: generatedEpisodes !== actualEpisodeCount,
+      });
+      
+      // 解析已有剧本，获取已有集数内容
+      // 使用更精确的正则匹配每个集的内容（包括分隔线）
+      const episodeRegex = /══════════════════════════════\n【第(\d+)集】[^\n]*\n══════════════════════════════[\s\S]*?(?=══════════════════════════════\n【第\d+集】|$)/g;
+      const existingScriptArray: string[] = [];
+      let match;
+      while ((match = episodeRegex.exec(aiGeneratedContent)) !== null) {
+        existingScriptArray.push(match[0]);
+      }
+      
+      // 如果没有匹配到带分隔线的格式，尝试匹配简单的【第X集】格式
+      if (existingScriptArray.length === 0) {
+        const simpleRegex = /【第\d+集】[^\n]*[\s\S]*?(?=【第\d+集】|$)/g;
+        while ((match = simpleRegex.exec(aiGeneratedContent)) !== null) {
+          existingScriptArray.push(match[0].trim());
+        }
+      }
+      
+      console.log('[续写] 解析已有剧本', { 
+        existingCount: existingScriptArray.length,
+        firstEpisode: existingScriptArray[0]?.slice(0, 50),
+      });
+
+      const requestBody = {
+        outline: outlineToUse,
+        coreDialogue: cachedCoreDialogue,
+        targetEpisodes: newTotalEpisodes, // 使用更新后的总目标集数
+        targetWords: getTargetWordsByMode(creativeMode),
+        creativeMode: creativeMode,
+        // 【修复】使用实际计算的集数，而不是状态值（状态值可能不准确）
+        startFromEpisode: actualEpisodeCount + 1,
+        existingScript: existingScriptArray,
+        episodesToWrite: actualEpisodesToWrite,
+        model: model || 'qwen-plus', // 使用用户选择的模型，默认 qwen-plus
+      };
+      
+      console.log('[续写请求体]', {
+        outlineLength: outlineToUse.length,
+        hasCoreDialogue: !!requestBody.coreDialogue,
+        targetEpisodes: requestBody.targetEpisodes,
+        startFromEpisode: requestBody.startFromEpisode,
+        episodesToWrite: requestBody.episodesToWrite,
+        existingScriptLength: requestBody.existingScript?.length,
+      });
+
+      const res = await fetch('/api/ai/generate-full-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      // 【错误日志】检查响应状态
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('[续写错误] 响应失败', { 
+          status: res.status, 
+          statusText: res.statusText,
+          errorText: errorText.slice(0, 500) 
+        });
+        throw new Error(`请求失败: ${res.status} ${res.statusText}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        console.error('[续写错误] 无法获取 reader');
+        throw new Error('无法读取响应');
+      }
+
+      const decoder = new TextDecoder();
+      let newScript = aiGeneratedContent;
+      let buffer = ''; // SSE 缓冲区，处理跨 chunk 的 JSON 截断
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        buffer += text;
+        const lines = buffer.split('\n');
+        // 保留最后一个不完整的行（可能被截断）
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === 'progress' && data.content) {
+                // 流式输出：累积内容并实时显示
+                newScript += data.content;  // 累积到 newScript
+                const cleanedPartial = cleanAiOutput(newScript);
+                setAiGeneratedContent(cleanedPartial || newScript);
+              }
+              
+              if (data.type === 'episode_complete' && data.script) {
+                // episode_complete：格式化显示，不再重复累积（progress 已累积）
+                const cleanedPartial = cleanAiOutput(newScript);
+                setAiGeneratedContent(cleanedPartial || newScript);
+                console.log('[续写] 单集完成', { episode: data.episode, contentLength: newScript.length });
+              }
+
+              if (data.type === 'complete') {
+                // 【重要】使用后端返回的完整 script，而不是前端累积的
+                const finalScript = data.data?.script || newScript;
+                const cleaned = cleanAiOutput(finalScript);
+                setAiGeneratedContent(cleaned);
+                
+                const newGeneratedEpisodes = data.data?.generatedEpisodes || generatedEpisodes;
+                const newTotalEpisodes = data.data?.totalEpisodes || totalEpisodes;
+                setGeneratedEpisodes(newGeneratedEpisodes);
+                // 【修复】确保 totalEpisodes 跟上实际进度
+                if (newTotalEpisodes > totalEpisodes || newGeneratedEpisodes > totalEpisodes) {
+                  setTotalEpisodes(Math.max(newTotalEpisodes, newGeneratedEpisodes));
+                }
+                
+                // 计算字数和场景数（使用清洗后的内容）
+                const wordCount = cleaned.replace(/\s/g, '').length;
+                // 增强场景匹配：支持多种格式，包括数字-数字格式（1-1、1-2等）
+                const sceneMatches = cleaned.match(/(?:\[|【|（)?场景[\s：:]*[\d一二三四五六七八九十]*\s*(?:】|\]|）)?|第[\d一二三四五六七八九十]+场|内景|外景|INT\.?|EXT\.?|^\d+-\d+$/gim);
+                // 直接统计所有场景数，不去重
+                const sceneCount = sceneMatches ? sceneMatches.length : 0;
+                
+                // 更新 script 状态
+                setScript(prev => prev ? {
+                  ...prev,
+                  wordCount: wordCount,
+                  sceneCount: sceneCount,
+                  episodeCount: newGeneratedEpisodes,
+                } : prev);
+                
+                // 自动保存
+                try {
+                  await apiFetch(`/api/scripts/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      title: script?.title,
+                      content: cleaned, // 使用清洗后的内容
+                      episodeCount: newGeneratedEpisodes,
+                      wordCount: wordCount,
+                      sceneCount: sceneCount,
+                      genre: script?.genre,
+                      status: 'draft',
+                    }),
+                  });
+                  console.log('[续写完成]', { newGeneratedEpisodes, totalEpisodes: Math.max(totalEpisodes, newGeneratedEpisodes), wordCount });
+                  toast.success(`续写完成，已生成 ${newGeneratedEpisodes}/${Math.max(totalEpisodes, newGeneratedEpisodes)} 集`);
+                } catch (saveError) {
+                  console.error('[续写错误] 保存失败:', saveError);
+                  toast.error('保存失败，请手动保存');
+                }
+              }
+            } catch (parseError) {
+              // 【错误日志】记录 JSON 解析错误
+              console.error('[续写错误] SSE 数据解析失败', { 
+                line: line.slice(0, 100),
+                error: parseError 
+              });
+            }
+          }
+        }
+      }
+      
+      // 【日志】SSE 流结束
+      console.log('[续写结束] SSE 流已完成');
+    } catch (error) {
+      console.error('[续写错误] 请求或处理失败:', error);
+      toast.error(error instanceof Error ? error.message : '续写失败');
+    } finally {
+      setIsContinuing(false);
     }
   };
 
@@ -1727,7 +2556,9 @@ export default function ScriptDetailPage() {
               const data = JSON.parse(line.slice(6));
               
               if (data.type === "delta") {
-                setStreamingText(prev => prev + data.content);
+                // 实时清洗流式输出中的JSON代码
+                const cleanedContent = cleanAiOutput(data.content);
+                setStreamingText(prev => prev + cleanedContent);
               } else if (data.type === "complete" && data.items) {
                 // 流式添加每个项目
                 for (const item of data.items) {
@@ -2095,9 +2926,9 @@ export default function ScriptDetailPage() {
   };
 
   const statusColor: Record<string, string> = {
-    已完成: "bg-[#22C55E]",
-    审核中: "bg-[#F59E0B]",
-    草稿: "bg-[#888888]",
+    已完成: "bg-nvwa-success",
+    审核中: "bg-nvwa-warning",
+    草稿: "bg-nvwa-text-secondary",
   };
 
   if (loading) {
@@ -2108,29 +2939,29 @@ export default function ScriptDetailPage() {
             {/* 顶部骨架 */}
             <div className="flex items-start justify-between">
               <div className="space-y-3 flex-1">
-                <div className="h-8 w-1/3 bg-[#1A1A1A] rounded animate-pulse" />
+                <div className="h-8 w-1/3 bg-nvwa-surface rounded animate-pulse" />
                 <div className="flex items-center gap-2">
-                  <div className="h-5 w-16 bg-[#1A1A1A] rounded animate-pulse" />
-                  <div className="h-5 w-24 bg-[#1A1A1A] rounded animate-pulse" />
+                  <div className="h-5 w-16 bg-nvwa-surface rounded animate-pulse" />
+                  <div className="h-5 w-24 bg-nvwa-surface rounded animate-pulse" />
                 </div>
               </div>
               <div className="flex gap-2">
-                <div className="h-9 w-20 bg-[#1A1A1A] rounded-lg animate-pulse" />
-                <div className="h-9 w-20 bg-[#1A1A1A] rounded-lg animate-pulse" />
+                <div className="h-9 w-20 bg-nvwa-surface rounded-lg animate-pulse" />
+                <div className="h-9 w-20 bg-nvwa-surface rounded-lg animate-pulse" />
               </div>
             </div>
             {/* Tab骨架 */}
-            <div className="flex gap-6 border-b border-[#333333]/50">
+            <div className="flex gap-6 border-b border-nvwa-border/50">
               {[1,2,3].map(i => (
-                <div key={i} className="h-10 w-20 bg-[#1A1A1A] rounded-t animate-pulse" />
+                <div key={i} className="h-10 w-20 bg-nvwa-surface rounded-t animate-pulse" />
               ))}
             </div>
             {/* 内容骨架 */}
             <div className="space-y-4">
-              <div className="h-4 w-full bg-[#1A1A1A] rounded animate-pulse" />
-              <div className="h-4 w-5/6 bg-[#1A1A1A] rounded animate-pulse" />
-              <div className="h-4 w-4/6 bg-[#1A1A1A] rounded animate-pulse" />
-              <div className="h-32 w-full bg-[#1A1A1A] rounded animate-pulse" />
+              <div className="h-4 w-full bg-nvwa-surface rounded animate-pulse" />
+              <div className="h-4 w-5/6 bg-nvwa-surface rounded animate-pulse" />
+              <div className="h-4 w-4/6 bg-nvwa-surface rounded animate-pulse" />
+              <div className="h-32 w-full bg-nvwa-surface rounded animate-pulse" />
             </div>
           </div>
         </main>
@@ -2161,7 +2992,16 @@ export default function ScriptDetailPage() {
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background/80 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => router.push("/scripts")}
+              onClick={() => {
+                // 检测是否有 AI 生成的内容（大纲或剧本）
+                const hasAIContent = aiGeneratedContent || generatedOutline;
+                
+                if (hasAIContent || isDirty) {
+                  setShowLeaveDialog(true);
+                } else {
+                  router.push("/scripts");
+                }
+              }}
               className="p-2 rounded-lg hover:bg-muted transition-colors"
             >
               <ArrowLeft className="w-5 h-5 text-muted-foreground" />
@@ -2174,9 +3014,9 @@ export default function ScriptDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             <>
-                <Button size="sm" onClick={handleSave} disabled={isSaving} className="gap-1.5">
+                <Button size="sm" onClick={handleSave} disabled={isSaving} className={`gap-1.5 ${isDirty ? 'ring-2 ring-yellow-500/50' : ''}`}>
                   {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  保存
+                  保存{isDirty ? '*' : ''}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleExportTxt} className="gap-1.5">
                   <Download className="w-4 h-4" />
@@ -2196,68 +3036,68 @@ export default function ScriptDetailPage() {
         </div>
 
         {/* Mobile View Tabs - Only visible on mobile */}
-        <div className="md:hidden border-b border-border bg-[#0A0A0A] overflow-x-auto">
+        <div className="md:hidden border-b border-border bg-nvwa-bg overflow-x-auto">
           <div className="flex items-center gap-1 px-2 py-2">
             <button
               onClick={() => setActiveView("script")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "script" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "script" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <FileText className="w-3.5 h-3.5" />
               <span>剧本</span>
             </button>
             <button
               onClick={() => setActiveView("storyboard")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "storyboard" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "storyboard" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <Film className="w-3.5 h-3.5" />
               <span>分镜</span>
             </button>
             <button
               onClick={() => setActiveView("roles")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "roles" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "roles" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <Users className="w-3.5 h-3.5" />
               <span>角色</span>
             </button>
             <button
               onClick={() => setActiveView("costumes")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "costumes" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "costumes" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <Shirt className="w-3.5 h-3.5" />
               <span>服装</span>
             </button>
             <button
               onClick={() => setActiveView("scenes")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "scenes" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "scenes" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <MapPin className="w-3.5 h-3.5" />
               <span>场景</span>
             </button>
             <button
               onClick={() => setActiveView("props")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "props" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "props" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <Package className="w-3.5 h-3.5" />
               <span>道具</span>
             </button>
             <button
               onClick={() => setActiveView("optimize")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "optimize" ? "bg-[#0ABAB5]/20 text-[#0ABAB5]" : "bg-[#1A1A1A] text-[#888888]"}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "optimize" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
               <Wand2 className="w-3.5 h-3.5" />
               <span>优化</span>
             </button>
             <button
-              onClick={() => setActiveView("redline")}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "redline" ? "bg-red-400/20 text-red-400" : "bg-[#1A1A1A] text-[#888888]"}`}
+              onClick={() => setActiveView("score")}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${activeView === "score" ? "bg-nvwa-primary/20 text-nvwa-primary" : "bg-nvwa-surface text-nvwa-text-secondary"}`}
             >
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>审查</span>
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>评分</span>
             </button>
             {/* More button */}
             <button
               onClick={() => setShowMobilePanel(true)}
-              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-[#1A1A1A] text-[#888888]"
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs bg-nvwa-surface text-nvwa-text-secondary"
             >
               <ChevronDown className="w-3.5 h-3.5" />
               <span>更多</span>
@@ -2275,7 +3115,7 @@ export default function ScriptDetailPage() {
           )}
           
           {/* Left Panel - Script Info & Actions */}
-          <div className={`w-80 border-r border-border flex flex-col bg-[#0A0A0A] transition-transform duration-300 h-full overflow-hidden
+          <div className={`w-80 border-r border-border flex flex-col bg-nvwa-bg transition-transform duration-300 h-full overflow-hidden
             fixed md:relative inset-y-0 left-0 z-50 md:z-auto
             ${showMobilePanel ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
           >
@@ -2292,17 +3132,17 @@ export default function ScriptDetailPage() {
             <div className="p-6 border-b border-border">
               <div className="flex items-center gap-2 mb-2">
                 <span
-                  className={`inline-block w-2 h-2 rounded-full ${statusColor[script.status] || "bg-[#888888]"}`}
+                  className={`inline-block w-2 h-2 rounded-full ${statusColor[script.status] || "bg-nvwa-text-secondary"}`}
                 />
-                <Badge variant="secondary" className="text-xs bg-[#1A1A1A] text-[#888888] border-none">
+                <Badge variant="secondary" className="text-xs bg-nvwa-surface text-nvwa-text-secondary border-none">
                   {script.status}
                 </Badge>
-                <Badge variant="secondary" className="text-xs bg-[#1A1A1A] text-[#888888] border-none">
+                <Badge variant="secondary" className="text-xs bg-nvwa-surface text-nvwa-text-secondary border-none">
                   {script.type}
                 </Badge>
               </div>
               <input
-                className="w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#0ABAB5]"
+                className="w-full bg-nvwa-surface border border-[#333] rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-nvwa-primary"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
                 placeholder="剧本标题"
@@ -2316,7 +3156,7 @@ export default function ScriptDetailPage() {
                     <button
                       onClick={handleGenerateCover}
                       disabled={isGeneratingCover}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-[#0ABAB5]/20 text-[#0ABAB5] rounded hover:bg-[#0ABAB5]/30 transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 px-2 py-1 text-xs bg-nvwa-primary/20 text-nvwa-primary rounded hover:bg-nvwa-primary/30 transition-colors disabled:opacity-50"
                     >
                       {isGeneratingCover ? (
                         <>
@@ -2341,7 +3181,7 @@ export default function ScriptDetailPage() {
                     <button
                       onClick={() => coverInputRef.current?.click()}
                       disabled={isUploadingCover}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-[#1A1A1A] text-foreground rounded hover:bg-[#222] transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 px-2 py-1 text-xs bg-nvwa-surface text-foreground rounded hover:bg-[#222] transition-colors disabled:opacity-50"
                     >
                       {isUploadingCover ? (
                         <>
@@ -2372,7 +3212,7 @@ export default function ScriptDetailPage() {
                     </button>
                   </div>
                 ) : (
-                  <div className="w-full h-32 bg-[#1A1A1A] border border-dashed border-[#333] rounded-lg flex items-center justify-center">
+                  <div className="w-full h-32 bg-nvwa-surface border border-dashed border-[#333] rounded-lg flex items-center justify-center">
                     <span className="text-xs text-muted-foreground">点击上方按钮生成或上传封面</span>
                   </div>
                 )}
@@ -2380,42 +3220,6 @@ export default function ScriptDetailPage() {
               <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2">
                 <span>字数: {liveStats.wordCount || 0}</span>
                 <span>场景: {liveStats.sceneCount || 0}</span>
-                <div className="flex items-center gap-1">
-                  <span>集数:</span>
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-16 bg-[#1A1A1A] border border-[#333] rounded px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:border-[#0ABAB5] text-center"
-                    value={script.episodeCount || 0}
-                    onChange={(e) => {
-                      const newCount = parseInt(e.target.value) || 0;
-                      setScript(prev => prev ? { ...prev, episodeCount: newCount } : prev);
-                    }}
-                    onBlur={async () => {
-                      // 保存到数据库
-                      try {
-                        await apiFetch(`/api/scripts/${id}`, {
-                          method: 'PUT',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ episodeCount: script?.episodeCount || 0 }),
-                        });
-                        toast.success('集数已保存');
-                        // 更新提取面板的集数模块
-                        if (script?.episodeCount && script.episodeCount > 0) {
-                          const newEpisodes = Array.from({ length: script.episodeCount }, (_, i) => ({
-                            episode: i + 1,
-                            title: `第${i + 1}集`,
-                            synopsis: ''
-                          }));
-                          setEpisodes(newEpisodes);
-                        }
-                      } catch {
-                        toast.error('保存集数失败');
-                      }
-                    }}
-                  />
-                  <span className="text-muted-foreground">集</span>
-                </div>
               </div>
             </div>
 
@@ -2428,67 +3232,67 @@ export default function ScriptDetailPage() {
                   </h3>
                   <div className="space-y-2">
                     <button
-                      onClick={() => { setActiveView("chat"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "chat" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      onClick={() => { setActiveView(aiCreateSubView); setShowMobilePanel(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${(activeView === "chat" || activeView === "create") ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Sparkles className="w-4 h-4 text-[#0ABAB5]" />
-                      <span>AI对话</span>
+                      <Sparkles className="w-4 h-4 text-nvwa-primary" />
+                      <span>AI创作</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("script"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "script" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "script" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <FileText className="w-4 h-4 text-[#0ABAB5]" />
+                      <FileText className="w-4 h-4 text-nvwa-primary" />
                       <span>剧本编辑</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("storyboard"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "storyboard" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "storyboard" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Film className="w-4 h-4 text-[#0ABAB5]" />
+                      <Film className="w-4 h-4 text-nvwa-primary" />
                       <span>生成分镜</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("roles"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "roles" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "roles" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Users className="w-4 h-4 text-[#0ABAB5]" />
+                      <Users className="w-4 h-4 text-nvwa-primary" />
                       <span>提取角色</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("costumes"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "costumes" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "costumes" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Shirt className="w-4 h-4 text-[#0ABAB5]" />
+                      <Shirt className="w-4 h-4 text-nvwa-primary" />
                       <span>提取服装</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("scenes"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "scenes" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "scenes" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <MapPin className="w-4 h-4 text-[#0ABAB5]" />
+                      <MapPin className="w-4 h-4 text-nvwa-primary" />
                       <span>提取场景</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("props"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "props" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "props" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Package className="w-4 h-4 text-[#0ABAB5]" />
+                      <Package className="w-4 h-4 text-nvwa-primary" />
                       <span>提取道具</span>
                     </button>
                     <button
                       onClick={() => { setActiveView("optimize"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "optimize" ? "bg-[#0ABAB5]/20 text-[#0ABAB5] ring-1 ring-[#0ABAB5]/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "optimize" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <Wand2 className="w-4 h-4 text-[#0ABAB5]" />
+                      <Wand2 className="w-4 h-4 text-nvwa-primary" />
                       <span>AI优化</span>
                     </button>
                     <button
-                      onClick={() => { setActiveView("redline"); setShowMobilePanel(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "redline" ? "bg-red-400/20 text-red-400 ring-1 ring-red-400/30" : "bg-[#1A1A1A] hover:bg-[#222] text-foreground"}`}
+                      onClick={() => { setActiveView("score"); setShowMobilePanel(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${activeView === "score" ? "bg-nvwa-primary/20 text-nvwa-primary ring-1 ring-nvwa-primary/30" : "bg-nvwa-surface hover:bg-[#222] text-foreground"}`}
                     >
-                      <ShieldAlert className="w-4 h-4 text-red-400" />
-                      <span>内容审查</span>
+                      <BarChart3 className="w-4 h-4 text-nvwa-primary" />
+                      <span>多维评分</span>
                     </button>
                   </div>
                 </div>
@@ -2500,14 +3304,74 @@ export default function ScriptDetailPage() {
 
           {/* Right Panel - Dynamic Content Container */}
           <div className="flex-1 flex flex-col min-w-0 bg-background overflow-auto">
-            {/* AI对话视图 */}
-            {activeView === "chat" && (
+            {/* AI创作视图 - 包含 AI对话 和 创意生成 两个子模式 */}
+            {(activeView === "chat" || activeView === "create") && (
               <ScriptChatPanel 
                 scriptId={id}
+                existingScriptContent={editContent} // 传递已有剧本内容，用于创意生成界面参考
                 onApplyToScript={async (content) => {
-                  setAiGeneratedContent(content);
-                  setContentVersion('ai');
+                  // "应用到剧本"：将创意生成的剧本输出应用到剧本编辑界面的编辑框
+                  // 检查剧本编辑框是否已有内容
+                  const existingContent = editContent;
+                  const hasExistingContent = existingContent && existingContent.trim().length > 0;
+                  
+                  let finalContent = content;
+                  
+                  if (hasExistingContent) {
+                    // 显示对话框让用户选择
+                    const userChoice = window.confirm(
+                      '剧本编辑框已有内容。\n\n点击"确定"覆盖现有内容\n点击"取消"追加到现有内容后面'
+                    );
+                    
+                    if (userChoice) {
+                      // 覆盖
+                      finalContent = content;
+                    } else {
+                      // 追加
+                      finalContent = `${existingContent}\n\n${content}`;
+                    }
+                  }
+                  
+                  // 应用到剧本编辑界面的编辑框（editContent），而不是 aiGeneratedContent
+                  setEditContent(finalContent);
+                  
+                  // 自动识别集数
+                  const episodeMatches = finalContent.match(/【第(\d+)集】/g);
+                  const detectedEpisodeCount = episodeMatches 
+                    ? Math.max(...episodeMatches.map(m => parseInt(m.match(/\d+/)?.[0] || '0', 10)))
+                    : Math.max(1, Math.ceil(finalContent.length / 15000));
+                  
+                  // 【修复】始终更新集数为实际检测到的集数（不管增加还是减少）
+                  // 同时更新 wordCount 和 sceneCount
+                  setScript(prev => prev ? { 
+                    ...prev, 
+                    episodeCount: detectedEpisodeCount,
+                    wordCount: finalContent.length,
+                    sceneCount: (finalContent.match(/场景|第[一二三四五六七八九十\d]+场|内景|外景|INT\.?|EXT\.?/gi) || []).length
+                  } : prev);
+                  
+                  // 【修复】根据集数标记拆分内容到 episodeContentMap
+                  // 这样可以正确显示每集内容，同时清理旧的集数
+                  if (detectedEpisodeCount > 1 && episodeMatches) {
+                    // 按【第N集】标记拆分内容
+                    const newEpisodeMap: Record<number, string> = {};
+                    const parts = finalContent.split(/【第\d+集】[^\n]*\n?/);
+                    const episodeTitles = finalContent.match(/【第\d+集】[^\n]*/g) || [];
+                    
+                    for (let i = 0; i < detectedEpisodeCount; i++) {
+                      const epNum = i + 1;
+                      const content = parts[i + 1]?.trim() || '';
+                      newEpisodeMap[epNum] = content;
+                    }
+                    setEpisodeContentMap(newEpisodeMap);
+                  } else {
+                    // 单集或无集数标记，清空 episodeContentMap
+                    setEpisodeContentMap({});
+                  }
+                  
+                  // 切换到剧本编辑视图
                   setActiveView("script");
+                  
                   // 自动保存AI生成内容
                   try {
                     await apiFetch(`/api/scripts/${id}`, {
@@ -2515,13 +3379,15 @@ export default function ScriptDetailPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         title: script?.title,
-                        content: content,
-                        episodeCount: script?.episodeCount,
+                        content: finalContent,
+                        episodeCount: detectedEpisodeCount, // 使用实际检测到的集数
                         genre: script?.genre,
                         status: 'draft',
                       }),
                     });
-                    toast.success("已应用到AI版本并自动保存");
+                    toast.success(hasExistingContent && !window.confirm 
+                      ? `已追加到剧本，当前共 ${detectedEpisodeCount} 集` 
+                      : `已应用到AI版本并自动保存，共 ${detectedEpisodeCount} 集`);
                   } catch {
                     toast.success("已应用到AI版本，请手动保存");
                   }
@@ -2530,15 +3396,48 @@ export default function ScriptDetailPage() {
                 setScriptIdea={setScriptIdea}
                 targetEpisodes={targetEpisodes}
                 setTargetEpisodes={setTargetEpisodes}
+                creativeMode={creativeMode}
+                setCreativeMode={setCreativeMode}
                 onGenerateFullScript={handleGenerateFullScript}
                 isGeneratingScript={isGeneratingScript}
+                isContinuing={isContinuing}
+                onCancelGeneration={handleCancelGeneration}
                 stageProgress={stageProgress ? { currentStage: stageProgress.stage, isComplete: stageProgress.stage >= 3 } : null}
+                stageProgressDetail={stageProgress}
+                generatedOutline={generatedOutline}
+                setGeneratedOutline={(outline) => setGeneratedOutline(outline as Record<string, unknown> | null)}
+                aiGeneratedContent={aiGeneratedContent}
+                setAiGeneratedContent={setAiGeneratedContent}
+                generatedEpisodes={generatedEpisodes}
+                totalEpisodes={totalEpisodes}
+                onContinueWriting={handleContinueWriting}
+                episodesPerWrite={episodesPerWrite}
+                setEpisodesPerWrite={setEpisodesPerWrite}
+                onModeChange={(mode) => {
+                  // 同步模式切换到 activeView，更新 URL
+                  if (mode === 'chat') {
+                    setActiveView('chat');
+                  } else if (mode === 'generate') {
+                    setActiveView('create');
+                  }
+                }}
+                initialMode={activeView === 'create' ? 'generate' : 'chat'}
+                onClearAll={() => {
+                  // 清空创意生成相关内容
+                  setAiGeneratedContent('');
+                  setGeneratedEpisodes(0);
+                  setTotalEpisodes(0);
+                  setCachedOutline(null);
+                  setCachedCoreDialogue(null);
+                  setStageProgress(null);
+                  toast.success('已清空所有内容');
+                }}
               />
             )}
             {activeView === "script" && (
               <>
                 {/* 简介编辑框 */}
-                <div className="mb-4 bg-[#141414] rounded-lg p-4">
+                <div className="mb-4 bg-muted rounded-lg p-4">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-ui text-muted-foreground">
                       剧本简介
@@ -2546,13 +3445,13 @@ export default function ScriptDetailPage() {
                     <button
                       onClick={handleExtractOutline}
                       disabled={isExtractingOutline || !editContent.trim()}
-                      className="text-xs text-[#0ABAB5] hover:underline disabled:opacity-50"
+                      className="text-xs text-nvwa-primary hover:underline disabled:opacity-50"
                     >
                       {isExtractingOutline ? '提炼中...' : '提炼大纲'}
                     </button>
                   </div>
                   <textarea
-                    className="outline-content w-full bg-[#1A1A1A] border border-[#333] rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-[#0ABAB5] resize-none"
+                    className="outline-content w-full bg-nvwa-surface border border-[#333] rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-nvwa-primary resize-none"
                     rows={3}
                     value={editSynopsis}
                     onChange={(e) => setEditSynopsis(e.target.value)}
@@ -2563,9 +3462,6 @@ export default function ScriptDetailPage() {
                 script={script}
                 editContent={editContent}
                 setEditContent={setEditContent}
-                aiGeneratedContent={aiGeneratedContent}
-                contentVersion={contentVersion}
-                setContentVersion={setContentVersion}
                 episodeContentMap={episodeContentMap}
                 setEpisodeContentMap={setEpisodeContentMap}
                 activeEpisode={activeEpisode}
@@ -2573,15 +3469,22 @@ export default function ScriptDetailPage() {
                 isUploading={isUploading}
                 uploadProgress={uploadProgress}
                 analyzeProgress={analyzeProgress}
-                isGeneratingScript={isGeneratingScript}
-                scriptIdea={scriptIdea}
-                setScriptIdea={setScriptIdea}
-                targetEpisodes={targetEpisodes}
-                setTargetEpisodes={setTargetEpisodes}
-                generatedOutline={generatedOutline}
                 onFileUpload={handleFileUpload}
-                onGenerateFullScript={handleGenerateFullScript}
-                stageProgress={stageProgress}
+                onApplyToStoryboard={(episodeContent) => {
+                  // 将当前剧集内容应用到分镜
+                  if (!episodeContent?.trim()) {
+                    toast.error("当前剧集内容为空");
+                    return;
+                  }
+                  // 更新editContent为当前剧集内容，然后触发分镜拆分
+                  setEditContent(episodeContent);
+                  // 切换到分镜视图
+                  setActiveView("storyboard");
+                  // 触发分镜拆分
+                  setTimeout(() => {
+                    handleSplitScenes();
+                  }, 100);
+                }}
               />
               </>
             )}
@@ -2798,8 +3701,8 @@ export default function ScriptDetailPage() {
                 onOptimize={handleStreamOptimize}
                 onModeChange={setOptimizingMode}
                 onApplyToScript={async (content) => {
-                  setAiGeneratedContent(content);
-                  setContentVersion('ai');
+                  // "应用到剧本"：将优化后的内容应用到剧本编辑界面的编辑框
+                  setEditContent(content);
                   // 自动保存优化后的内容
                   try {
                     await apiFetch(`/api/scripts/${id}`, {
@@ -2822,20 +3725,91 @@ export default function ScriptDetailPage() {
               />
             )}
 
-            {activeView === "redline" && (
-              <RedlineView
-                checkResult={checkResult}
-                isChecking={isChecking}
-                onCheck={handleComplianceCheck}
+            {activeView === "score" && (
+              <ScoreView
+                scriptId={id}
+                scriptContent={editContent}
+                onReviewComplete={(result) => {
+                  console.log('评分完成:', result);
+                }}
               />
             )}
           </div>
         </div>
 
+        {/* Leave Confirmation Dialog */}
+        {showLeaveDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-muted border border-[#333] rounded-2xl p-6 w-full max-w-md mx-4">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-foreground">未保存的内容</h3>
+                  <p className="text-sm text-muted-foreground">您有未保存的内容，请选择操作</p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 mt-6">
+                <Button
+                  className="w-full bg-[#0ABAB5] hover:bg-[#0ABAB5]/80 text-white"
+                  onClick={async () => {
+                    try {
+                      // 直接保存当前内容，两套系统独立
+                      const title = editTitle || script?.title || "未命名剧本";
+                      const synopsis = editSynopsis || script?.synopsis || "";
+                      const contentToSave = editContent;
+                      
+                      await apiFetch(`/api/scripts/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          title,
+                          synopsis,
+                          content: contentToSave,
+                          outline: generatedOutline,
+                          aiContent: aiGeneratedContent,
+                        }),
+                      });
+                      
+                      setIsDirty(false);
+                      setShowLeaveDialog(false);
+                      toast.success("草稿已保存");
+                      router.push("/scripts");
+                    } catch (error) {
+                      console.error("[保存草稿失败]", error);
+                      toast.error("保存失败，请重试");
+                    }
+                  }}
+                >
+                  保存并离开
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full border-[#333] hover:bg-muted/80"
+                  onClick={() => {
+                    setShowLeaveDialog(false);
+                    router.push("/scripts");
+                  }}
+                >
+                  不保存离开
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowLeaveDialog(false)}
+                >
+                  取消
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Delete Confirmation */}
         {showDelete && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-[#141414] border border-[#333] rounded-2xl p-6 w-full max-w-sm mx-4">
+            <div className="bg-muted border border-[#333] rounded-2xl p-6 w-full max-w-sm mx-4">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center">
                   <Trash2 className="w-5 h-5 text-red-400" />
@@ -2850,7 +3824,7 @@ export default function ScriptDetailPage() {
               <div className="flex gap-3">
                 <Button
                   variant="outline"
-                  className="flex-1 border-[#333] hover:bg-[#1A1A1A]"
+                  className="flex-1 border-[#333] hover:bg-nvwa-surface"
                   onClick={() => setShowDelete(false)}
                 >
                   取消
@@ -2865,6 +3839,9 @@ export default function ScriptDetailPage() {
             </div>
           </div>
         )}
+
+        {/* AI 工具箱 - 右下角浮动小球 */}
+        <AiToolbox />
       </main>
     </AppShell>
   );

@@ -1,345 +1,257 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { ImageGenerationClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
+import { CharacterBible, buildConsistencyAnchor } from '@/lib/character/bible';
+import { CharacterReference } from '@/lib/character/reference-binding';
 
-import { NextRequest, NextResponse } from "next/server";
-import { generateImage, generateImageWithReference, getUserApiKey } from "@/lib/ai-client";
-import { getUserId } from "@/lib/server-auth";
-import { deductCredits } from "@/lib/credits";
-import { logger } from "@/lib/logger";
-import { checkRateLimit } from "@/lib/security/ai-rate-limiter";
-import { validateTokenLimit } from "@/lib/security/token-limiter";
-import { recordApiCost, canUserProceed } from "@/lib/security/cost-alert";
-import { getSupabaseClient } from "@/storage/database/supabase-client";
+/**
+ * P3-4: 3层提示词融合接入生图流程
+ * 
+ * Layer 1: 剧本场景描述（scene description）
+ * Layer 2: 参考图特征（reference images + extracted features）
+ * Layer 3: 角色圣经一致性锚点（character bible consistency anchor）
+ * 
+ * 最终提示词 = Layer 1 + Layer 2 + Layer 3
+ * 
+ * 兼容两种调用格式:
+ * 1. { prompt, model, n, size } - 简单格式
+ * 2. { sceneDescription, characterBible, ... } - 完整格式
+ */
 
-// 保存生成记录到数据库
-async function saveGenerationToDB(params: {
-  userId: string;
-  type: string;
-  prompt: string;
-  model: string;
-  imageUrls?: string[];
-  results?: unknown;
-  params?: Record<string, unknown>;
-}) {
-  try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      logger.warn("[Save Generation] Supabase 客户端未初始化");
-      return;
-    }
-
-    const { data, error } = await supabase.from("generations").insert({
-      type: params.type,
-      prompt: params.prompt,
-      model: params.model,
-      user_id: params.userId,
-      params: params.params || {},
-      results: params.results || { imageUrls: params.imageUrls || [] },
-    }).select();
-
-    if (error) {
-      logger.error("[Save Generation] 保存失败:", error.message);
-    } else {
-      logger.debug("[Save Generation] 保存成功:", data?.[0]?.id);
-    }
-  } catch (err) {
-    logger.error("[Save Generation] 异常:", err);
-  }
+export interface ImageGenerationRequest {
+  // 简单格式（向后兼容）
+  prompt?: string;
+  model?: string;
+  n?: number;
+  size?: string;
+  ratio?: string;
+  
+  // 完整格式
+  sceneDescription?: string;
+  characterAction?: string;
+  expression?: string;
+  cameraAngle?: string;
+  lighting?: string;
+  
+  // Layer 3: 角色圣经
+  characterBible?: CharacterBible;
+  characterId?: string;
+  
+  // Layer 2: 参考图
+  referenceImages?: string[];
+  image?: string; // 单张参考图
+  
+  // 生成参数
+  aspectRatio?: '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
+  style?: 'realistic' | 'anime' | 'cinematic' | 'sketch';
+  quality?: 'standard' | 'hd' | 'ultra';
+  responseFormat?: 'url' | 'b64_json';
 }
 
+// 将各种尺寸格式转换为标准 size
+function normalizeSize(size?: string, ratio?: string, aspectRatio?: string): string {
+  // 直接传入 size
+  if (size) {
+    const sizeMap: Record<string, string> = {
+      '1024x1024': '1024x1024',
+      '768x1024': '768x1024',
+      '1024x768': '1024x768',
+      '576x1024': '576x1024',
+      '1024x576': '1024x576',
+      '512x512': '512x512',
+      '1:1': '1024x1024',
+      '3:4': '768x1024',
+      '4:3': '1024x768',
+      '9:16': '576x1024',
+      '16:9': '1024x576',
+    };
+    return sizeMap[size] || size;
+  }
+  
+  // 从 ratio 转换
+  if (ratio) {
+    const ratioMap: Record<string, string> = {
+      '1:1': '1024x1024',
+      '3:4': '768x1024',
+      '4:3': '1024x768',
+      '9:16': '576x1024',
+      '16:9': '1024x576',
+    };
+    return ratioMap[ratio] || '1024x1024';
+  }
+  
+  // 从 aspectRatio 转换
+  if (aspectRatio) {
+    const ratioMap: Record<string, string> = {
+      '1:1': '1024x1024',
+      '3:4': '768x1024',
+      '4:3': '1024x768',
+      '9:16': '576x1024',
+      '16:9': '1024x576',
+    };
+    return ratioMap[aspectRatio] || '1024x1024';
+  }
+  
+  return '1024x1024'; // 默认
+}
+
+// 将 style 转换为提示词增强
+function styleToPrompt(style: string): string {
+  const styleMap: Record<string, string> = {
+    'realistic': 'photorealistic, high detail, natural lighting',
+    'anime': 'anime style, cel shading, vibrant colors',
+    'cinematic': 'cinematic lighting, film grain, dramatic composition',
+    'sketch': 'pencil sketch, hand drawn style, artistic',
+  };
+  return styleMap[style] || '';
+}
+
+// POST: 生成图片（支持多种调用格式）
 export async function POST(request: NextRequest) {
   try {
-    // 获取用户ID
-    const userId = await getUserId(request);
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, error: "未登录" },
-        { status: 401 }
-      );
-    }
-
-    // 检查成本限制
-    const costCheck = canUserProceed(userId);
-    if (!costCheck.allowed) {
-      return NextResponse.json(
-        { success: false, error: costCheck.reason },
-        { status: 429 }
-      );
-    }
-
-    // 检查限流
-    const rateLimitResult = checkRateLimit(request, "generate-image");
-    if (!rateLimitResult.allowed) {
-      return NextResponse.json(
-        { success: false, error: rateLimitResult.reason },
-        { status: 429, headers: rateLimitResult.headers }
-      );
-    }
-
-    // 先解析请求体获取模型和数量信息
+    const body: ImageGenerationRequest = await request.json();
     const {
+      // 简单格式
       prompt,
       model,
-      size,
       n = 1,
-      images, // 参考图片数组（URL或Base64）
-      referenceImages, // 多图参考图片数组（0-9张）
-      referenceImage, // 参考图片URL（单个，兼容旧接口）
-      enableSequential, // 组图模式
-      thinkingMode, // 思考模式
-      watermark, // 水印
-      seed, // 随机种子
-    } = await request.json();
+      size,
+      ratio,
+      // 完整格式
+      sceneDescription,
+      characterAction,
+      expression,
+      cameraAngle,
+      lighting,
+      characterBible,
+      characterId,
+      referenceImages = [],
+      image,
+      aspectRatio,
+      style = 'cinematic',
+      quality = 'hd',
+      responseFormat = 'url',
+    } = body;
 
-    if (!prompt) {
+    // 兼容：优先使用 sceneDescription，fallback 到 prompt
+    const finalPrompt = sceneDescription || prompt;
+    
+    if (!finalPrompt) {
       return NextResponse.json(
-        { error: "Prompt is required" },
+        { error: 'sceneDescription or prompt is required' },
         { status: 400 }
       );
     }
 
-    // 根据模型确定扣费模型key
-    const actualModel = model || "wan2.7-image-pro";
-    let pricingModelKey = "wan2.7-text2image"; // 默认
-    
-    // 即梦模型使用对应的定价key
-    if (actualModel.startsWith("seedream-3")) {
-      pricingModelKey = "seedream-3.0-t2i";
-    } else if (actualModel.startsWith("seedream-4") || actualModel.startsWith("seedance-4")) {
-      pricingModelKey = "seedream-4.6-t2i";
-    } else if (actualModel.startsWith("seedance-2")) {
-      pricingModelKey = "seedance-2.0-t2i";
-    } else if (actualModel.startsWith("wan2.7") || actualModel.startsWith("wan2.6")) {
-      pricingModelKey = "wan2.7-text2image";
-    } else if (actualModel.startsWith("wanx")) {
-      pricingModelKey = "wanx-text2image";
-    }
-    
-    // 即梦模型需要按出图数量扣费（因为每次API调用只出1张）
-    const isJimengModel = actualModel.startsWith("seedance") || actualModel.startsWith("seedream");
-    const deductCount = isJimengModel ? n : 1;
-    
-    // 扣费检查
-    for (let i = 0; i < deductCount; i++) {
-      const deductResult = await deductCredits(
-        userId,
-        pricingModelKey,
-        `文生图生成 (${actualModel})`
-      );
-      if (!deductResult.success) {
-        return NextResponse.json(
-          { success: false, error: deductResult.error || "积分不足" },
-          { status: 402 }
-        );
-      }
-    }
-
-    // 获取用户保存的API Key
-    const apiKey = await getUserApiKey(userId);
-    if (!apiKey) {
-      return NextResponse.json(
-        { success: false, error: "请先在设置页面配置您的API Key" },
-        { status: 401 }
-      );
-    }
-    
-
-    logger.debug("[Generate Image API] Using API Key:", apiKey?.substring(0, 10) + "...");
-    logger.debug("[Generate Image API] Model:", model);
-    logger.debug("[Generate Image API] Size:", size);
-    logger.debug("[Generate Image API] n:", n);
-    logger.debug("[Generate Image API] Reference Images count:", referenceImages?.length || 0);
-
-    // 整理参考图片列表（支持多图）
-    let effectiveReferenceImages: string[] = [];
-    
-    // 优先使用referenceImages（多图）
-    if (referenceImages && Array.isArray(referenceImages) && referenceImages.length > 0) {
-      effectiveReferenceImages = referenceImages
-        .map((img: { url?: string; preview?: string }) => img.url || img.preview)
-        .filter((url): url is string => Boolean(url))
-        .slice(0, 9); // 最多9张
-    }
-    // 兼容旧的单图接口
-    else if (referenceImage) {
-      effectiveReferenceImages = [referenceImage];
-    }
-    // 兼容images参数
-    else if (images && Array.isArray(images) && images.length > 0) {
-      effectiveReferenceImages = images.slice(0, 9);
-    }
-    
-    if (effectiveReferenceImages.length > 0) {
-      // 参考图生图模式（支持多图）
-      logger.debug("[Generate Image API] Using reference image mode, image count:", effectiveReferenceImages.length);
-      
-      const result = await generateImageWithReference(prompt, effectiveReferenceImages, {
-        model: model || "wan2.7-image-pro",
-        size,
-        n,
-        apiKey,
-      });
-      
-      return NextResponse.json({
-        success: true,
-        data: {
-          imageUrls: result.imageUrls,
-          ratio: result.ratio,
-        },
-      });
-    }
-
-    // 文生图模式
-    // 构建选项
-    const options: {
-      model?: string;
-      size?: string;
-      n?: number;
-      images?: string[];
-      enableSequential?: boolean;
-      thinkingMode?: boolean;
-      watermark?: boolean;
-      seed?: number;
-      apiKey?: string;
-    } = {
-      model: model || "wan2.7-image-pro",
-      size,
-      n,
-      apiKey, // 传递用户API Key
-    };
-
-    // 添加可选参数
-    if (images && Array.isArray(images) && images.length > 0) {
-      options.images = images;
-    }
-    if (enableSequential !== undefined) {
-      options.enableSequential = enableSequential;
-    }
-    if (thinkingMode !== undefined) {
-      options.thinkingMode = thinkingMode;
-    }
-    if (watermark !== undefined) {
-      options.watermark = watermark;
-    }
-    if (seed !== undefined) {
-      options.seed = seed;
-    }
-
-    logger.debug("[Generate Image API] === 即梦批量出图调试 ===");
-    logger.debug("[Generate Image API] n 参数:", n);
-    logger.debug("[Generate Image API] options.n:", options.n);
-    
-    const result = await generateImage(prompt, options) as Record<string, unknown>;
-    
-    logger.debug("[Generate Image API] result 类型:", typeof result);
-    logger.debug("[Generate Image API] result.taskId:", result.taskId);
-    logger.debug("[Generate Image API] result.taskIds:", result.taskIds);
-    logger.debug("[Generate Image API] result keys:", Object.keys(result));
-
-    // ai-client.ts 返回格式：{ imageUrls: string[], ratio: string } 或 { taskId: string }
-    // 情况1: ai-client 已经解析出图片URL
-    if (result.imageUrls && Array.isArray(result.imageUrls) && result.imageUrls.length > 0) {
-      // 记录成本
-      recordApiCost("generate-image", userId);
-
-      // 保存到数据库
-      await saveGenerationToDB({
-        type: "image",
-        prompt,
-        model: model || "unknown",
-        results: result.imageUrls,
-        userId,
-      });
-
-      return NextResponse.json({
-        success: true,
-        data: { 
-          imageUrls: result.imageUrls,
-          ratio: result.ratio,
-        },
-      });
-    }
-
-    // 情况2: 原始API响应 - 万相2.7 多模态API格式
-    // output.choices[0].message.content[0].image
-    const output = result.output as Record<string, unknown> | undefined;
-    if (output?.choices && Array.isArray(output.choices)) {
-      const imageUrls: string[] = [];
-      for (const choice of output.choices) {
-        const choiceObj = choice as Record<string, unknown>;
-        const message = choiceObj.message as Record<string, unknown> | undefined;
-        if (message?.content && Array.isArray(message.content)) {
-          for (const item of message.content) {
-            const itemObj = item as Record<string, unknown>;
-            if (itemObj.image) {
-              imageUrls.push(itemObj.image as string);
-            }
-          }
-        }
-      }
-      
-      if (imageUrls.length > 0) {
-        // 保存到数据库
-        await saveGenerationToDB({
-          type: "image",
-          prompt,
-          model: model || "wanxiang",
-          results: imageUrls,
-          userId,
-        });
-
-        return NextResponse.json({
-          success: true,
-          data: { imageUrls },
-        });
-      }
-    }
-
-    // 情况3: 异步任务模式 - ai-client直接返回 { taskId } 或 { taskIds }
-    const taskId = result.taskId || (output?.task_id as string | undefined);
-    const taskIds = result.taskIds as string[] | undefined;
-    
-    if (taskIds && taskIds.length > 0) {
-      // 批量任务（即梦多图）- 保存任务ID
-      await saveGenerationToDB({
-        type: "image",
-        prompt,
-        model: model || "jimeng",
-        results: { taskIds, status: "pending" },
-        userId,
-      });
-
-      return NextResponse.json({
-        success: true,
-        data: { taskIds },
-      });
-    }
-    
-    if (taskId) {
-      // 单个任务 - 保存任务ID
-      await saveGenerationToDB({
-        type: "image",
-        prompt,
-        model: model || "jimeng",
-        results: { taskId, status: "pending" },
-        userId,
-      });
-
-      return NextResponse.json({
-        success: true,
-        data: { taskId },
-      });
-    }
-
-    // 如果都没有，返回错误
-    console.error("Unknown response format:", result);
-    return NextResponse.json({
-      success: false,
-      error: "无法解析API响应，请查看日志",
+    // 构建融合提示词
+    const fusedPrompt = buildFusedPrompt({
+      sceneDescription: finalPrompt,
+      characterAction,
+      expression,
+      cameraAngle,
+      lighting,
+      characterBible,
+      style,
     });
-  } catch (error) {
-    console.error("Generate image error:", error);
+
+    // 参考图：优先使用 image，其次 referenceImages
+    const referenceImage = image || referenceImages[0];
+
+    // 调用真正的生图 API
+    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
+    const config = new Config();
+    const client = new ImageGenerationClient(config, customHeaders);
+
+    const finalSize = normalizeSize(size, ratio, aspectRatio);
+
+    console.log('[generate-image] 生图参数:', {
+      prompt: fusedPrompt.substring(0, 100),
+      size: finalSize,
+      style,
+      n,
+      hasReference: !!referenceImage,
+    });
+
+    // 生成多张图片
+    const generatedUrls: string[] = [];
+    const count = Math.min(n, 4); // 最多4张
+
+    for (let i = 0; i < count; i++) {
+      const response = await client.generate({
+        prompt: fusedPrompt,
+        size: finalSize,
+        image: referenceImage || undefined,
+        responseFormat,
+      });
+
+      const helper = client.getResponseHelper(response);
+
+      if (helper.success && helper.imageUrls.length > 0) {
+        generatedUrls.push(...helper.imageUrls);
+      } else {
+        console.error('[generate-image] 生成第', i + 1, '张失败:', helper.errorMessages);
+      }
+    }
+
+    if (generatedUrls.length > 0) {
+      return NextResponse.json({
+        success: true,
+        imageUrls: generatedUrls,
+        imageUrl: generatedUrls[0], // 兼容单图返回
+        data: generatedUrls.map(url => ({ url })), // 兼容 OpenAI 格式
+        fusedPrompt,
+      });
+    }
+
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : "Generate image failed" },
+      { error: '生图失败，请稍后重试' },
+      { status: 500 }
+    );
+  } catch (error) {
+    console.error('[generate-image] Error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to generate image';
+    return NextResponse.json(
+      { error: msg },
       { status: 500 }
     );
   }
+}
+
+// 构建3层融合提示词
+function buildFusedPrompt(params: {
+  sceneDescription: string;
+  characterAction?: string;
+  expression?: string;
+  cameraAngle?: string;
+  lighting?: string;
+  characterBible?: CharacterBible;
+  style?: string;
+}): string {
+  const { sceneDescription, characterAction, expression, cameraAngle, lighting, characterBible, style } = params;
+
+  let prompt = '';
+
+  // Layer 3: 角色圣经一致性锚点（最高优先级）
+  if (characterBible) {
+    const anchor = buildConsistencyAnchor(characterBible);
+    prompt += `[角色一致性要求]\n${anchor}\n\n`;
+  }
+
+  // Layer 1: 场景描述
+  prompt += sceneDescription;
+
+  // 补充动作、表情、镜头、光线
+  if (characterAction) prompt += `, ${characterAction}`;
+  if (expression) prompt += `, ${expression}`;
+  if (cameraAngle) prompt += `, ${cameraAngle}`;
+  if (lighting) prompt += `, ${lighting}`;
+
+  // 添加风格提示词
+  if (style) {
+    const stylePrompt = styleToPrompt(style);
+    if (stylePrompt) {
+      prompt += `. ${stylePrompt}`;
+    }
+  }
+
+  return prompt;
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { getUserId } from '@/lib/server-auth';
+import { sanitizeScriptInput } from '@/lib/security/xss-sanitizer';
 
 // 分页配置
 const DEFAULT_PAGE = 1;
@@ -120,13 +121,22 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json();
+  
+  // XSS 过滤：清理用户输入
+  const sanitized = sanitizeScriptInput({
+    title: body.title,
+    genre: body.genre,
+    synopsis: body.synopsis,
+    content: body.content,
+  });
+  
   const userId = await getUserId(request as NextRequest);
   const client = getSupabaseClient();
   const insertPayload: Record<string, unknown> = {
-    title: body.title || '未命名剧本',
-    genre: body.genre || '未分类',
-    synopsis: body.synopsis || '',
-    content: body.content || '',
+    title: sanitized.title || '未命名剧本',
+    genre: sanitized.genre || '未分类',
+    synopsis: sanitized.synopsis || '',
+    content: sanitized.content || '',
     scenes: body.scenes || 0,
     characters: body.characters || 0,
     status: body.status || 'draft',
@@ -143,10 +153,10 @@ export async function POST(request: Request) {
     const { data: data2, error: error2 } = await client
       .from('scripts')
       .insert({
-        title: body.title || '未命名剧本',
-        genre: body.genre || '未分类',
-        synopsis: body.synopsis || '',
-        content: body.content || '',
+        title: sanitized.title || '未命名剧本',
+        genre: sanitized.genre || '未分类',
+        synopsis: sanitized.synopsis || '',
+        content: sanitized.content || '',
         scenes: body.scenes || 0,
         characters: body.characters || 0,
         status: body.status || 'draft',
